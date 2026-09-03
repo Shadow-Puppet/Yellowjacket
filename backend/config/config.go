@@ -303,6 +303,24 @@ func (c *Config) GetLibraryDirectory() string {
 	return string(c.Library.DirectoryPath)
 }
 
+// A rejected setter puts the old value back, and that is not tidiness
+// (#231).  Save validates the *whole* config, so a value left behind by
+// a failed write does not merely fail its own call: it fails every
+// later save, of every unrelated setting, silently and for the rest of
+// the session.  Nothing reaches disk, so a restart clears it -- which
+// is exactly what makes the fault hard to see and impossible to report.
+//
+// The setters below that assign and then validate therefore snapshot
+// the field first and restore it on the error path.  SetLibraryDirectory
+// is the other safe shape and the better one where the value can be
+// built on its own: it validates a candidate *before* assigning
+// anything, so there is nothing to undo.
+//
+// Not every setter needs either.  A bool, an int64 and the shortcut
+// bindings pass through no validation that can reject them, and
+// SetViewVisible refuses an unknown, non-hideable or launch-page view
+// up front, so GeneralConfig.Validate never sees one it would fail on.
+
 // SetLibraryDirectory validates and saves a new library directory,
 // then emits the LibraryConfigChanged event so listeners (e.g. the
 // Library scanner) can react.
@@ -360,11 +378,14 @@ func (c *Config) SetScanConcurrency(mode string) error {
 		c.Library.ApplyDefaults()
 	}
 
+	previous := c.Library.ScanConcurrency
 	c.Library.ScanConcurrency = library.ScanConcurrency(
 		mode,
 	)
 
 	if err := c.Library.Validate(); err != nil {
+		c.Library.ScanConcurrency = previous
+
 		return fmt.Errorf(
 			"invalid scan concurrency mode: %w", err,
 		)
@@ -455,9 +476,12 @@ func (c *Config) SetThemeAccentColor(
 		c.Theme.ApplyDefaults()
 	}
 
+	previous := c.Theme.AccentColor
 	c.Theme.AccentColor = color
 
 	if err := c.Theme.Validate(); err != nil {
+		c.Theme.AccentColor = previous
+
 		return fmt.Errorf(
 			"invalid theme accent color: %w", err,
 		)
@@ -488,9 +512,12 @@ func (c *Config) SetThemeBackgroundShade(
 		c.Theme.ApplyDefaults()
 	}
 
+	previous := c.Theme.BackgroundShade
 	c.Theme.BackgroundShade = theme.BackgroundShade(shade)
 
 	if err := c.Theme.Validate(); err != nil {
+		c.Theme.BackgroundShade = previous
+
 		return fmt.Errorf(
 			"invalid theme background shade: %w", err,
 		)
@@ -544,9 +571,12 @@ func (c *Config) SetDefaultPage(page string) error {
 		c.General.ApplyDefaults()
 	}
 
+	previous := c.General.DefaultPage
 	c.General.DefaultPage = View(page)
 
 	if err := c.General.Validate(); err != nil {
+		c.General.DefaultPage = previous
+
 		return fmt.Errorf(
 			"invalid default page: %w", err,
 		)
@@ -591,9 +621,12 @@ func (c *Config) SetQueueFallback(mode string) error {
 		c.General.ApplyDefaults()
 	}
 
+	previous := c.General.QueueFallback
 	c.General.QueueFallback = QueueFallback(mode)
 
 	if err := c.General.Validate(); err != nil {
+		c.General.QueueFallback = previous
+
 		return fmt.Errorf(
 			"invalid queue fallback: %w", err,
 		)
@@ -801,9 +834,12 @@ func (c *Config) SetTrackListColumns(
 		c.TrackList = &tracklist.Config{}
 	}
 
+	previous := c.TrackList.Columns
 	c.TrackList.Columns = columns
 
 	if err := c.TrackList.Validate(); err != nil {
+		c.TrackList.Columns = previous
+
 		return fmt.Errorf(
 			"invalid track-list columns: %w", err,
 		)
@@ -901,9 +937,12 @@ func (c *Config) SetFavoritesIconStyle(
 		c.Favorites.ApplyDefaults()
 	}
 
+	previous := c.Favorites.IconStyle
 	c.Favorites.IconStyle = favorites.IconStyle(style)
 
 	if err := c.Favorites.Validate(); err != nil {
+		c.Favorites.IconStyle = previous
+
 		return fmt.Errorf(
 			"invalid favorites icon style: %w", err,
 		)
