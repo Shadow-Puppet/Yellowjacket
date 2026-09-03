@@ -42,11 +42,16 @@ strings and identical specs produce different bytes on different builds.
   playback and then clicks pause races the track ending and fails
   against a correct UI. Use `LONG_TRACK` (90 s, `edge-lengths`) exported
   from `e2e/support/fixtures.ts`.
-- **WAV tracks scan in untitled.** `backend/tagwriter` writes WAV tags
-  into a RIFF `id3 ` chunk and `dhowden/tag` has no RIFF parser, so
-  there is no "Field Recordings" artist in the Artists view. This is a
-  known open bug pinned by `TestWAVTagsAreNotReadableYet`; do not
-  "fix" a spec by asserting the broken behaviour elsewhere.
+- **WAV tracks scan like every other format.** #104 added
+  `backend/riff`, so the scan reads the `id3 ` chunk `backend/tagwriter`
+  writes and both WAVs come in fully tagged: "Field Recordings" is an
+  ordinary artist in the Artists view, with a "Test Tones" album and a
+  cover. They are therefore not an example of an untitled or albumless
+  track — the only two tracks with no album are
+  `unsorted/no-tags-at-all.mp3` and `unsorted/title-only.mp3`. Prose
+  written before #104 says the opposite and names
+  `TestWAVTagsAreNotReadableYet`, a test that change deleted; that is
+  dated history rather than a description of the app.
 
 ## Seeds
 

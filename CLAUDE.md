@@ -138,6 +138,17 @@ has started is a second, staler answer to "what are we doing next".
 Numbering is sequential and stable across status moves (a plan keeps
 its `NNN-` prefix). Abandoned plans are deleted.
 
+**The autonomous loop** (plan 020, `.pi/skills/yj-loop/`) is the pi
+configuration that works the tracker one issue at a time — a cron tick
+in a dedicated worktree and session, with the tracker labels as its
+state machine. It claims with `issue.sh` like anyone, merges only PRs
+it opened once the protection contexts are green, and files what it
+finds. Its switch is `.pi/schedule-prompts.json` (gitignored): it runs
+only while that pi session is open, and that limitation is the whole
+on/off design. Where a loop discovery contradicts this file, this file
+is wrong and should be fixed by the diary leg — the loop never quietly
+decides otherwise.
+
 ## Commands
 
 ```bash
@@ -3274,6 +3285,27 @@ duplicate detection whose rows are track/artist/duration cannot tell
 its own duplicates apart) — and changing either is invisible against an
 existing `YJ_HOME`, whose `config.toml` already holds the old list, so
 `make sandbox-seed NAME=default` before believing the app.
+
+**And the *valid* columns are declared twice too, which is the pair
+that drifted.** `tracklist.AllColumnIDs` is what the backend accepts;
+`COLUMN_DEFS` is what the frontend knows how to draw, and they are not
+the same set — `titleArtist` is a definition and not a choice, since it
+is the phone's stacked column and is picked by width in
+`PHONE_COLUMN_IDS`. Settings built its list from `Object.keys(
+COLUMN_DEFS)` and so offered it: **two rows both called "Track Name"**
+(#197), the second unselectable, because ticking it sends a column set
+Go rejects with `unknown track-list column ID` and `config-page`
+swallows that into a `console.error`. `CONFIGURABLE_COLUMN_IDS` is what
+the configurator reads now, derived from a `configurable` flag on the
+definition, and `settings-column-list.test.ts` reads Go's own list out
+of the source rather than writing it down a third time — the rule being
+about every column, so checking one checks nothing.
+
+One thing it does **not** fix, because it is reachable from any invalid
+input rather than from that row: `SetTrackListColumns` assigns before it
+validates, so a rejected list stays in memory and `Save()` validates the
+whole config — one tick and **no setting saves for the rest of the
+session**, silently. That is #231.
 
 **Event-driven communication**: Backend emits events via Wails runtime; frontend stores subscribe to them. Event names are constants in `backend/events/`.
 

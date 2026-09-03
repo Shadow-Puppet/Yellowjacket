@@ -32,6 +32,18 @@ export interface ColumnDef {
     id: string;
     /** Human-readable header label. */
     label: string;
+    /**
+     * Whether Settings may offer this column. Defaults to true.
+     *
+     * A definition is not the same thing as a *choice*. `titleArtist`
+     * is the phone's stacked column, picked by width in
+     * `PHONE_COLUMN_IDS`, and `tracklist.AllColumnIDs` in Go does not
+     * list it — so a tick in the configurator sends a column set the
+     * backend rejects with `unknown track-list column ID`, the tick
+     * reverts on the next render, and the only trace is a
+     * `console.error` (#197).
+     */
+    configurable?: boolean;
     /** Extracts the display value from a track. */
     accessor: (track: library.Track) => string;
     /** Default CSS width (used when no saved width exists). */
@@ -98,11 +110,16 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
     },
     titleArtist: {
         id: 'titleArtist',
-        // Named for what it sorts by, since that is the only place the
-        // label is user-visible: the phone has no column headers, and
-        // the page header's sort list is built from the *configured*
-        // columns rather than the drawn ones.
+        // Named for what it sorts by. That label is drawn nowhere
+        // today: the phone has no column headers, and the page header's
+        // sort list is built from the *configured* columns, which this
+        // one can never be — see `configurable` below.
         label: 'Track Name',
+        // Chosen by width, never by the user, and rejected by the
+        // backend if it ever were. #197: Settings listed it anyway, so
+        // there were two rows called "Track Name" and the second one
+        // could not be selected.
+        configurable: false,
         accessor: (t) => t.TrackName,
         defaultWidth: '1fr',
         comparator: (a, b) => compareStr(a.TrackName, b.TrackName),
@@ -266,10 +283,15 @@ export const COLUMN_DEFS: Record<string, ColumnDef> = {
 };
 
 /**
- * All column IDs in default display order.
- * Used by the settings UI to list available columns.
+ * The column IDs Settings may offer, in default display order.
+ *
+ * Not every definition is one: a column the user cannot choose has no
+ * row in the configurator, because a checkbox that cannot change
+ * anything is worse than an absent one — see `ColumnDef.configurable`.
  */
-export const ALL_COLUMN_IDS: string[] = Object.keys(COLUMN_DEFS);
+export const CONFIGURABLE_COLUMN_IDS: string[] = Object.keys(
+    COLUMN_DEFS,
+).filter((id) => COLUMN_DEFS[id]?.configurable !== false);
 
 /**
  * Column IDs that are always searched regardless of visibility.
