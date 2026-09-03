@@ -2,12 +2,14 @@ import { LitElement, html, css, nothing } from 'lit';
 import { customElement, state, query } from 'lit/decorators.js';
 import '@awesome.me/webawesome/dist/components/dialog/dialog.js';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
+import { EventsOn } from '@runtime/runtime';
 import {
     AddLibrary,
     GetAllLibrariesWithTrackCounts,
 } from '@go/library/library.js';
 import { describeError, explainError } from '@utils/describe-error';
 import { nameDialogsIn } from '@utils/name-dialog';
+import { Events } from '../../events';
 import { pickDirectory } from '../../utils/pick-directory';
 
 /**
@@ -19,6 +21,13 @@ import { pickDirectory } from '../../utils/pick-directory';
  * prompting the user to pick their music folder, registers it through the
  * library CRUD API, and dismisses itself.  AddLibrary emits LibraryAdded
  * and kicks off the initial scan automatically.
+ *
+ * **The dismissal follows the library existing, not the button being
+ * pressed.** `AddLibrary` emits `LibraryAdded` whoever calls it, so the
+ * wizard waits on the state it exists to wait for rather than on a step
+ * in its own flow — a library arriving by any other route (Settings, a
+ * direct call) leaves a full-screen modal up otherwise, intercepting
+ * every pointer event.
  */
 @customElement('first-run-wizard')
 export class FirstRunWizard extends LitElement {
@@ -37,8 +46,17 @@ export class FirstRunWizard extends LitElement {
     /** Error message from a failed pick/save, if any. */
     @state() private errorMessage = '';
 
+    /** Unsubscribe from LibraryAdded, while this element is connected. */
+    private cancelLibraryAdded?: () => void;
+
     override async connectedCallback(): Promise<void> {
         super.connectedCallback();
+
+        // Subscribed before the read below, so a library arriving while
+        // that call is in flight is not answered with a stale empty list.
+        this.cancelLibraryAdded = EventsOn(Events.LibraryAdded, () => {
+            this.dismiss();
+        });
 
         try {
             const existing = await GetAllLibrariesWithTrackCounts();
@@ -54,11 +72,20 @@ export class FirstRunWizard extends LitElement {
             return;
         }
 
+        if (this.finished) return;
+
         this.active = true;
 
         await this.updateComplete;
 
         if (this.dialog) this.dialog.open = true;
+    }
+
+    override disconnectedCallback(): void {
+        this.cancelLibraryAdded?.();
+        this.cancelLibraryAdded = undefined;
+
+        super.disconnectedCallback();
     }
 
     static override styles = css`
@@ -239,6 +266,20 @@ export class FirstRunWizard extends LitElement {
         if (!this.finished) e.preventDefault();
     };
 
+    /**
+     * Close, and stay closed: a library exists, so setup is over.
+     *
+     * `finished` is set first, or `preventClose` cancels the hide this
+     * asks for.
+     */
+    private dismiss(): void {
+        this.finished = true;
+
+        if (this.dialog) this.dialog.open = false;
+
+        this.active = false;
+    }
+
     private handleChoose = async (): Promise<void> => {
         this.errorMessage = '';
 
@@ -264,11 +305,7 @@ export class FirstRunWizard extends LitElement {
         try {
             await AddLibrary(this.selectedDirectory);
 
-            this.finished = true;
-
-            if (this.dialog) this.dialog.open = false;
-
-            this.active = false;
+            this.dismiss();
         } catch (err) {
             this.errorMessage = explainError(
                 err,
