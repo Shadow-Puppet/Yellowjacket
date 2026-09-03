@@ -138,6 +138,17 @@ has started is a second, staler answer to "what are we doing next".
 Numbering is sequential and stable across status moves (a plan keeps
 its `NNN-` prefix). Abandoned plans are deleted.
 
+**The autonomous loop** (plan 020, `.pi/skills/yj-loop/`) is the pi
+configuration that works the tracker one issue at a time — a cron tick
+in a dedicated worktree and session, with the tracker labels as its
+state machine. It claims with `issue.sh` like anyone, merges only PRs
+it opened once the protection contexts are green, and files what it
+finds. Its switch is `.pi/schedule-prompts.json` (gitignored): it runs
+only while that pi session is open, and that limitation is the whole
+on/off design. Where a loop discovery contradicts this file, this file
+is wrong and should be fixed by the diary leg — the loop never quietly
+decides otherwise.
+
 ## Commands
 
 ```bash
