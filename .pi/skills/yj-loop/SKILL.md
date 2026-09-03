@@ -163,7 +163,22 @@ Merge when, and only when, **all** hold:
 - the protection contexts `CI / check` and `CI / e2e` are green on the
   PR's head, read from the API, not from the PR page's badge;
 - the PR reports mergeable;
-- the critique leg ran and no open blocker stands.
+- the critique leg ran and no open blocker stands;
+- the branch is **not behind `origin/main`** — the protection's
+  `block_on_outdated_branch: true` refuses it anyway; never
+  `force_manually_merged` around it.
+
+**Refresh before every merge.** In the loop worktree: fetch, then
+`git merge origin/main` on the PR branch, push. A textual conflict
+stops the leg there — as diff text, not as a failed merge click: hunks
+the loop authored are resolved by the loop; anything else is left with
+`⟦loop⟧` comment for a human, never forced. After any refresh push,
+re-poll the PR's own required contexts on the **new head** before
+merging.
+
+**Merges happen one at a time**, each re-reading state — the previous
+merge moved `main`, and the next PR's mergeability is recomputed at
+its own turn.
 
 ```
 curl -sS -X POST -H "Authorization: token $GITEA_TOKEN" \
@@ -172,12 +187,20 @@ curl -sS -X POST -H "Authorization: token $GITEA_TOKEN" \
   -d '{"Do":"merge","merge_message_field":"default","force_manually_merged":false}'
 ```
 
-Afterwards: `scripts/issue.sh list --state open` and check the footer
-took. Close stragglers with `issue.sh close`, naming the merge commit.
-`unclaim.yml` handles the label; it is not instant; reopening does not
-restore it. Merging fans out to nothing (releases are the manual
-`release.yml`, which the loop never runs) — the criticism stands before
-the merge because nothing stands after it.
+**Afterwards watch the `push` run on `main`** — the CI the merge
+started. A red main after a loop merge is a **halt**: comment what is
+known on the offending PR, mark the state file, stop taking new issues.
+That run is the only thing between a clean textual merge of
+independently-written PRs and a self-contradicting main; no
+mergeability check sees it. Only a green main lets the tick proceed (to
+footer verification, below).
+
+Footer verification: `scripts/issue.sh list --state open` and check
+the footer took. Close stragglers with `issue.sh close`, naming the
+merge commit. `unclaim.yml` handles the label; it is not instant;
+reopening does not restore it. Merging fans out to nothing (releases
+are the manual `release.yml`, which the loop never runs) — the
+criticism stands before the merge because nothing stands after it.
 
 ## Rails — the loop's absolute rules
 
