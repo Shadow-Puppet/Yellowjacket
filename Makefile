@@ -192,7 +192,7 @@ css-check: ## Fail on a css`` literal ended early by a backtick, or a nested rul
 # Every command in them is a make target on purpose, so this is
 # checkable.  It also asserts AGENTS.md is a symlink to CLAUDE.md, so the
 # two harnesses cannot drift onto two descriptions of one project.
-skill-check: ## Fail if the agent docs name a missing make target, or AGENTS.md is not a symlink
+skill-check: ## Fail if the docs name a missing make target, or AGENTS.md is not a symlink
 	@./scripts/skill-check.sh
 
 # Conventional Commits, which CLAUDE.md claimed CI enforced for a long
