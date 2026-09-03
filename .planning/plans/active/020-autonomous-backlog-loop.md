@@ -112,7 +112,9 @@ in the job's directory — that limitation is the switch:
 
 - **Worktree:** `git worktree add` a dedicated clone at
   `~/.paseo/worktrees/loop/jumpy-hound`. Loop edits happen only there; a
-  dirty tree there is the loop's business and nobody else's.
+  dirty tree there is the loop's business and nobody else's. **Provision
+  it once before its first push:** `make build-frontend` + `make testdata`
+  — the pre-push `go-test` hook needs both and refuses without them.
 - **Session:** pi in that worktree, `/name loop`. The job is bound to that
   session, so another pi elsewhere in the same directory does not
   double-fire it.
