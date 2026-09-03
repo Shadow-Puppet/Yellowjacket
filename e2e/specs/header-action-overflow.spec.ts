@@ -42,10 +42,10 @@ const ACTIONS = ['Import', 'New Playlist', 'New Smart Playlist'];
  * because the number this issue is about (a button 48px wider than the
  * box holding it) is not in the accessibility tree at all.
  */
-const headerFit = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
+const headerFit = (page: import('@playwright/test').Page, view = 'playlist-view') =>
+  page.evaluate((tag) => {
     const root = document
-      .querySelector('[data-testid="main-content"] playlist-view')
+      .querySelector(`[data-testid="main-content"] ${tag}`)
       ?.shadowRoot?.querySelector('page-header')?.shadowRoot;
 
     if (!root) return null;
@@ -76,7 +76,7 @@ const headerFit = (page: import('@playwright/test').Page) =>
         ...root.querySelectorAll('#page-header-overflow wa-dropdown-item'),
       ].map((i) => i.textContent?.trim() ?? ''),
     };
-  });
+  }, view);
 
 test.describe('the page header never clips an action', () => {
   test.beforeEach(async ({ app }) => {
@@ -314,5 +314,60 @@ test.describe('the page header never clips an action', () => {
       .poll(async () => (await headerFit(app))?.buttons)
       .toEqual(ACTIONS);
     await expect.poll(async () => (await headerFit(app))?.menu).toEqual([]);
+  });
+});
+
+/**
+ * The Tracks header carries the play-all/shuffle-all pair (#31), so
+ * the promise above has to hold for it too — the same per-button
+ * measurement, one view over. Its two actions are the whole of the
+ * header's declared set, and the pair is what plays the list the row
+ * is in, so a button rendered 20px of its 90px is a queue of nothing.
+ */
+const TRACK_ACTIONS = ['Play all', 'Shuffle all'];
+
+test.describe('the Tracks header never clips an action', () => {
+  test.beforeEach(async ({ app }) => {
+    await app.getByTestId('nav-tracks').click();
+    await expect(app.getByTestId('main-content')).toHaveAttribute(
+      'data-active-view',
+      'tracks',
+    );
+  });
+
+  test.afterEach(async ({ app }) => {
+    await app.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  for (const vp of VIEWPORTS) {
+    test(`every action is reachable at ${vp.name}`, async ({ app }) => {
+      await app.setViewportSize({ width: vp.width, height: vp.height });
+
+      await expect
+        .poll(async () => (await headerFit(app, 'track-list'))?.clipped)
+        .toEqual([]);
+
+      const fit = (await headerFit(app, 'track-list'))!;
+
+      expect(fit.overflow).toBeLessThanOrEqual(0);
+
+      // Between them, buttons and menu account for both actions —
+      // not "it fits" but "nothing was dropped to make it fit".
+      expect([...fit.buttons, ...fit.menu].sort()).toEqual(
+        [...TRACK_ACTIONS].sort(),
+      );
+    });
+  }
+
+  /**
+   * The pair's names, through the accessibility tree — a shadow query
+   * measures, but it cannot say what a screen reader is offered.
+   */
+  test('both actions are named controls', async ({ app }) => {
+    for (const label of TRACK_ACTIONS) {
+      await expect(
+        app.getByRole('button', { name: label, exact: true }),
+      ).toBeVisible();
+    }
   });
 });

@@ -11,10 +11,21 @@ import {
     GetArtistImageCachedPath,
     GetArtistMBID,
 } from '@go/explore/service.js';
+import { GetFilePathsByAlbums } from '@go/library/library.js';
+import { libraryStore } from '@store/library-store';
+import { notificationStore } from '@store/notification-store';
+import { dict } from '@utils/binding';
+import { playAll } from '@utils/play-all';
+import { describeError } from '@utils/describe-error';
+import { ICON_PLAY, ICON_SHUFFLE } from '@utils/icon-language';
 import '@awesome.me/webawesome/dist/components/icon/icon.js';
 import '@components/cover-grid/cover-grid.js';
+import '../notifications/inline-notice';
 import { designTokens } from '../../styles/tokens.css';
 import { backButton } from '../../styles/back-button.css';
+
+/** The region the artist header's own failures are rendered in. */
+const ArtistRegion = 'library-artist';
 
 @customElement('artist-details')
 export class ArtistDetails extends LitElement {
@@ -131,6 +142,39 @@ export class ArtistDetails extends LitElement {
             );
         }
 
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .header-action {
+            background: none;
+            border: 1px solid var(--yj-border-subtle, #555);
+            border-radius: 4px;
+            color: var(--yj-text-primary, #fff);
+            padding: 6px 12px;
+            font-size: var(--yj-text-md, 13px);
+            font-family: inherit;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            white-space: nowrap;
+        }
+
+        .header-action:hover {
+            border-color: var(--yj-accent, #ffd43b);
+            color: var(--yj-accent-text, #ffd43b);
+        }
+
+        .header-action:disabled {
+            opacity: 0.5;
+            cursor: default;
+        }
+
         /* ====================================
          * Content
          * ==================================== */
@@ -145,6 +189,23 @@ export class ArtistDetails extends LitElement {
             height: 100%;
         }
 
+        /* Phone widths: the header's flex row squeezed .artist-info to
+         * nothing, so the title ellipsised away entirely and the
+         * actions clipped against the host's own overflow — the album
+         * page's fault one detail view over (#66). The pair takes its
+         * own row instead. Written last, because a media query adds no
+         * specificity and a rule placed above the plain ones it
+         * overrides is silently dead. */
+        @media (max-width: 599px) {
+            .artist-header {
+                flex-wrap: wrap;
+            }
+
+            .header-actions {
+                flex-basis: 100%;
+                margin-left: 0;
+            }
+        }
     `];
 
     override connectedCallback() {
@@ -302,6 +363,45 @@ export class ArtistDetails extends LitElement {
         return name.charAt(0).toUpperCase();
     }
 
+    /**
+     * Play every track on this artist's albums, in album order.
+     *
+     * One `GetFilePathsByAlbums` call returns the paths grouped by
+     * album id; the caller owns the ordering, so they are flattened in
+     * `this.albums` order rather than by id.
+     */
+    private async playAllTracks(shuffle: boolean): Promise<void> {
+        if (this.albums.length === 0) return;
+
+        try {
+            const libId = libraryStore.getSelectedLibraryId() ?? 0;
+            const ids = this.albums.map((a) => a.ID);
+            const byAlbum = await dict(
+                GetFilePathsByAlbums(ids, libId),
+            );
+            const paths: string[] = [];
+
+            for (const id of ids) {
+                paths.push(...(byAlbum[id] ?? []));
+            }
+
+            playAll(
+                paths,
+                {
+                    type: 'artist',
+                    id: this.artistId,
+                    label: this.artistName,
+                },
+                shuffle,
+            );
+        } catch (error) {
+            console.error('Could not play artist:', error);
+            notificationStore.inline(ArtistRegion, {
+                text: describeError(error, 'Could not play this artist’s tracks.'),
+            });
+        }
+    }
+
     /* ================================================================
      * Rendering
      * ================================================================ */
@@ -351,12 +451,38 @@ export class ArtistDetails extends LitElement {
                           `
                         : ''}
                 </div>
+                <div class="header-actions">
+                    <button
+                        class="header-action"
+                        data-testid="artist-play-all"
+                        ?disabled=${this.albums.length === 0}
+                        @click=${() =>
+                            void this.playAllTracks(false)}
+                    >
+                        <wa-icon name=${ICON_PLAY}></wa-icon>
+                        Play all
+                    </button>
+                    <button
+                        class="header-action"
+                        data-testid="artist-shuffle-all"
+                        ?disabled=${this.albums.length === 0}
+                        @click=${() =>
+                            void this.playAllTracks(true)}
+                    >
+                        <wa-icon name=${ICON_SHUFFLE}></wa-icon>
+                        Shuffle all
+                    </button>
+                </div>
             </div>
             <div class="content">
                 <cover-grid
                     .externalAlbums=${this.albums}
                 ></cover-grid>
             </div>
+            <inline-notice
+                region=${ArtistRegion}
+                testid="artist-play-message"
+            ></inline-notice>
         `;
     }
 }

@@ -15,6 +15,7 @@ import {
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import { queueStore } from '@store/queue-store';
+import { playAll } from '@utils/play-all';
 import { creditStore } from '@store/credit-store';
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
@@ -771,24 +772,29 @@ export class SmartPlaylistDetails
     // Actions
     // =================================================================
 
-    private handlePlay() {
-        const filePaths = this.tracks
+    private playableFilePaths(): string[] {
+        return this.tracks
             .filter((t) => !t.Phantom)
             .map((t) => t.FilePath);
+    }
 
-        if (filePaths.length === 0) return;
-
-        queueStore.setQueue(filePaths, 0, false, { type: 'smartPlaylist', id: this.playlistId, label: this.playlistName });
+    private handlePlay() {
+        playAll(
+            this.playableFilePaths(),
+            { type: 'smartPlaylist', id: this.playlistId, label: this.playlistName },
+            false,
+        );
     }
 
     private handleShuffle() {
-        const filePaths = this.tracks
-            .filter((t) => !t.Phantom)
-            .map((t) => t.FilePath);
-
-        if (filePaths.length === 0) return;
-
-        queueStore.setQueue(filePaths, 0, true, { type: 'smartPlaylist', id: this.playlistId, label: this.playlistName });
+        // This used to be a no-op when shuffle mode was off: it passed
+        // `shuffleStart` without turning the mode on, so the queue
+        // started at track 1 in order.  `playAll` sets the mode first.
+        playAll(
+            this.playableFilePaths(),
+            { type: 'smartPlaylist', id: this.playlistId, label: this.playlistName },
+            true,
+        );
     }
 
     private async handleRefresh() {

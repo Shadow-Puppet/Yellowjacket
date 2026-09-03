@@ -137,7 +137,7 @@ test.describe('queue', () => {
   });
 
   test('shuffle and repeat toggles report their state', async ({ app }) => {
-    const shuffle = app.getByRole('button', { name: 'Shuffle' });
+    const shuffle = app.getByRole('button', { name: 'Shuffle', exact: true });
 
     await resetEvents(app);
     await shuffle.click();
