@@ -140,6 +140,20 @@ from a concurrent session is caught before the first edit.
 
 - **Only PRs the loop opened.** A collaborator's PR is never merged, never
   commented on for pressure, never touched.
+- **Every branch is refreshed against main before its merge**, in the
+  loop worktree — the refresh is where a textual conflict surfaces, as
+  diff text: hunks the loop authored are resolved there, anything else
+  is left to a human with a `⟦loop⟧` comment. The protection's
+  `block_on_outdated_branch` makes the refresh mandatory for adopted
+  (pre-loop) branches: behind `main`, a PR cannot merge at all.
+  Required contexts are re-polled on the refreshed head.
+- **Merges are one at a time**, each re-reading state — the previous
+  merge moved `main`, and the next PR's mergeability is recomputed at
+  its own turn.
+- **Post-merge, the `push` run on `main` is watched.** A red main after
+  a loop merge halts the loop. That run is the only guard against the
+  class no mergeability check sees: two PRs touching the same file,
+  merging cleanly, contradicting each other.
 - The gate is the protection rule itself, read from the API: contexts
   `CI / check*` and `CI / e2e*` green, PR mergeable. (Required approvals
   is 0 today; if a second person changes protection rules, the merge
