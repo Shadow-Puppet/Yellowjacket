@@ -89,7 +89,9 @@ build/android/overlay.json
 # into scripts/gitea-release.sh; the release page is the changelog.
 .release-notes.md
 
-# Agent session log: local scratch, not repo memory (that is CLAUDE.md
-# and .planning/). Written by the scheduled backlog runs.
+# Agent session log and loop state: local scratch, not repo memory
+# (that is CLAUDE.md and .planning/). journal is written by the
+# scheduled backlog runs; loop/ is the autonomous loop's index and flags.
 .pi/journal.md
 .pi/schedule-prompts.json
+.pi/loop/

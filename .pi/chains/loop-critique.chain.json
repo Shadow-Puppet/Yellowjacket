@@ -1,0 +1,28 @@
+{
+  "context": "fresh",
+  "chain": [
+    {
+      "parallel": [
+        {
+          "agent": "yj-loop.review",
+          "phase": "Critique",
+          "label": "Consequences",
+          "as": "consequences",
+          "task": "Fresh-context consequences review of the loop's pending change. Issue, plan comment and branch: {task}. Read the issue, the plan comment, CLAUDE.md's load-bearing shapes, and the branch diff against origin/main. Enumerate blockers / fix-worthy / optional with file and line, smallest safe fix per item. Do not modify project/source files; returning findings through the configured output artifact is allowed.",
+          "output": "critique/consequences.md",
+          "outputMode": "file-only"
+        },
+        {
+          "agent": "yj-loop.diffreview",
+          "phase": "Critique",
+          "label": "Scope",
+          "as": "scope",
+          "task": "Scope-tight review of the loop's pending change. Issue, plan comment and branch: {task}. Read the issue, the plan comment and the diff. Does the code do what the plan said, correctly, within its claimed scope? Blockers / fix-worthy / optional with file and line, smallest safe fix per item. Do not modify project/source files; returning findings through the configured output artifact is allowed.",
+          "output": "critique/scope.md",
+          "outputMode": "file-only"
+        }
+      ],
+      "concurrency": 2
+    }
+  ]
+}
