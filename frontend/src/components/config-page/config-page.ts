@@ -51,7 +51,7 @@ import type { BackgroundShade } from '@store/theme-store';
 import type { IconStyle } from '@store/favorites-store';
 import {
     COLUMN_DEFS,
-    ALL_COLUMN_IDS,
+    CONFIGURABLE_COLUMN_IDS,
 } from '@components/track-list/columns';
 
 import './config-field';
@@ -1640,7 +1640,7 @@ export class ConfigPage extends ViewLifecycleMixin(LitElement) {
             ...this.trackListCtrl.columnIds,
         ];
 
-        const disabledIds = ALL_COLUMN_IDS.filter(
+        const disabledIds = CONFIGURABLE_COLUMN_IDS.filter(
             (id) => !enabledIds.includes(id),
         );
 
