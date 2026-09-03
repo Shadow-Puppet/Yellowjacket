@@ -168,8 +168,12 @@ Merge when, and only when, **all** hold:
   `block_on_outdated_branch: true` refuses it anyway; never
   `force_manually_merged` around it.
 
-**Refresh before every merge.** In the loop worktree: fetch, then
-`git merge origin/main` on the PR branch, push. A textual conflict
+**Refresh before every merge.** In the loop worktree: `git fetch origin`
+in the same breath, then `git merge origin/main` on the PR branch,
+push. The fetch must be immediate — a cached `origin/main` merges
+against the wrong base, CI goes green on it, and the merge comes back
+405 "behind base", one whole CI cycle wasted (measured on the adoption
+wave). A textual conflict
 stops the leg there — as diff text, not as a failed merge click: hunks
 the loop authored are resolved by the loop; anything else is left with
 `⟦loop⟧` comment for a human, never forced. After any refresh push,
@@ -247,7 +251,10 @@ AVD), then `make android-emulator` per session.
 
 - **Worktree:** `git worktree add ~/.paseo/worktrees/loop/jumpy-hound
   origin/main` (from any clone; branch from origin/main in the loop
-  tree, never `git checkout main`).
+  tree, never `git checkout main`). **Provision it once before the
+  first push:** `make build-frontend` and `make testdata` — the pre-push
+  `go-test` hook needs `frontend/dist` (the `//go:embed` in `main.go`)
+  and the fixture library, and refuses the push without them.
 - **Session:** pi in that worktree, `/name loop`. Add the job via
   `/schedule-prompt` (name `yj-loop`, cron
   `0 0 10-18 * * 1-5`, prompt: "Read `.pi/skills/yj-loop/SKILL.md` and
@@ -271,3 +278,11 @@ AVD), then `make android-emulator` per session.
 - The job did not fire — the scheduler fires only while a session is
   open in its directory (documented); "the loop is off" is the correct
   reading, not a bug.
+- `error: object file … is empty` / `unpack-objects failed` / `bad
+  object refs/heads/…` during a fetch or checkout — the shared object
+  store was corrupted (a killed fetch leaves 0-byte object files, and a
+  local ref can end up pointing at the dead sha1). **Halt and report**;
+  do not retry, the churn only deepens it. Human repair: delete the
+  0-byte objects, `git fetch origin --prune`, delete any ref that
+  still dangles (`git update-ref -d refs/heads/<b>`), re-checkout the
+  worktree at `origin/main`, then `git fsck --full`.
