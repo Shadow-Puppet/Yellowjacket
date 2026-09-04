@@ -81,6 +81,24 @@ rules. Never "go fix it" — the leg contract is in this file.
 | escalation | `yj-loop.escalate` | go/kimi-k3 (T3) | same leg re-run, seeded with failure summary |
 | prose (PR body, commit msgs, journal) | `yj-loop.scribe` | go/mimo-v2.5 (T0) | text only, from supplied facts |
 
+**Model fallback on quota exhaustion.** The pinned models are the
+intent, not a guarantee. The qwen token plan is a weekly pool and has
+run dry mid-tick (`429 … 1-week quota exhausted`). When a leg's launch
+fails with a 429, re-run it with a per-run `model` override one rung
+down and journal the substitution — never spend the T3 escalation
+model on a quota substitution. The qwen-pinned legs (`work`,
+`diffreview`) fall back `qwen/deepseek-v4-pro-0813` → `go/deepseek-v4-pro`
+→ `go/glm-5.3-flash`. Do **not** use the `deepseek/...` provider: it has
+no models, only catalog overrides, and fails silently (empty artifact,
+no session) — the model lives on the `go` gateway.
+
+**Launch legs in the foreground.** The async subagent runner has died
+without persisting a child session (nothing to resume) and emits
+spurious "needs attention" nudges on runs that are already complete.
+Foreground `subagent` calls are the reliable mode here. A worker that
+dies mid-leg leaves uncommitted work: inspect the tree, then relaunch
+to *complete* — never to re-implement.
+
 Orchestrator-only legs: **claim** (`issue.sh claim --branch` — atomic,
 refuses if held), **ship's PR/CI polling** (REST API below — `gitea_ci`
 job_logs 404s on this Gitea; the REST endpoints are the way), **merge**
