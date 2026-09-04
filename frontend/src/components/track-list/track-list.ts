@@ -26,7 +26,10 @@ import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller
 import { PlayerController } from '@store/controllers/player-controller';
 import { SearchController } from '@store/controllers/search-controller';
 import '@components/page-header/page-header';
-import type { SortOption } from '@components/page-header/page-header';
+import type {
+    SortOption,
+    PageAction,
+} from '@components/page-header/page-header';
 import { TrackListController } from '@store/controllers/tracklist-controller';
 import { FavoritesController } from '@store/controllers/favorites-controller';
 import { queueStore } from '@store/queue-store';
@@ -87,7 +90,9 @@ import {
     ICON_PLAYLIST,
     ICON_PLAY_NEXT,
     ICON_QUEUE,
+    ICON_SHUFFLE,
 } from '@utils/icon-language';
+import { playAll } from '@utils/play-all';
 
 const COLUMN_STORAGE_KEY = 'track-list-column-widths';
 const SORT_FIELD_KEY = 'track-list-sort-field';
@@ -2393,6 +2398,27 @@ export class TrackList
                 .map((c) => ({ id: c.id, label: c.label })),
         ];
 
+        const hasTracks = this.cachedSortedTracks.length > 0;
+
+        const actions: PageAction[] = [
+            {
+                id: 'play-all',
+                label: 'Play all',
+                icon: ICON_PLAY,
+                priority: 1,
+                disabled: !hasTracks,
+                onSelect: this.handlePlayAll,
+            },
+            {
+                id: 'shuffle-all',
+                label: 'Shuffle all',
+                icon: ICON_SHUFFLE,
+                priority: 0,
+                disabled: !hasTracks,
+                onSelect: this.handleShuffleAll,
+            },
+        ];
+
         return html`
             <page-header
                 heading=${this.externalTracks === undefined ? 'Tracks' : ''}
@@ -2404,10 +2430,28 @@ export class TrackList
                 sort-field=${this.sortField ?? ''}
                 sort-direction=${this.sortDirection}
                 search-term=${this.searchCtrl.term}
+                .actions=${actions}
                 @sort-change=${this.onPageHeaderSort}
             ></page-header>
         `;
     }
+
+    /** The queue is the list as displayed, in the order the user sees. */
+    private handlePlayAll = (): void => {
+        playAll(
+            this.cachedSortedTracks.map((t) => t.FilePath),
+            this.effectiveQueueSource,
+            false,
+        );
+    };
+
+    private handleShuffleAll = (): void => {
+        playAll(
+            this.cachedSortedTracks.map((t) => t.FilePath),
+            this.effectiveQueueSource,
+            true,
+        );
+    };
 
     private onPageHeaderSort = (
         e: CustomEvent<{ field: string; direction: 'asc' | 'desc' }>,

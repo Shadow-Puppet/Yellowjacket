@@ -85,7 +85,9 @@ import {
     ICON_PLAYLIST,
     ICON_QUEUE,
     ICON_REMOVE,
+    ICON_SHUFFLE,
 } from '@utils/icon-language';
+import { playAll } from '@utils/play-all';
 
 /** One playlist row: the track and its position in the *playlist*,
  *  which is not its position in the filtered view. */
@@ -355,14 +357,32 @@ export class PlaylistDetails
     // Track interactions
     // =================================================================
 
-    private handlePlayAll() {
-        const filePaths = this.tracks
+    private playableFilePaths(): string[] {
+        return this.tracks
             .filter((t) => !t.Phantom)
             .map((t) => t.FilePath);
+    }
 
-        if (filePaths.length === 0) return;
+    private handlePlayAll() {
+        // Start at the first row, not at a random one: the old `true`
+        // was `shuffleStart`, which only picks a random first track
+        // when shuffle mode is already on — so "Play All" quietly did
+        // "play from the top" while leaving the mode as it was.  The
+        // mode semantics now live in `playAll`, shared with the other
+        // track lists.
+        playAll(
+            this.playableFilePaths(),
+            { type: 'playlist', id: this.playlistId, label: this.playlistName },
+            false,
+        );
+    }
 
-        queueStore.setQueue(filePaths, 0, true, { type: 'playlist', id: this.playlistId, label: this.playlistName });
+    private handleShuffleAll() {
+        playAll(
+            this.playableFilePaths(),
+            { type: 'playlist', id: this.playlistId, label: this.playlistName },
+            true,
+        );
     }
 
     private handleTrackClick(
@@ -1599,8 +1619,15 @@ export class PlaylistDetails
                     class="play-all-button"
                     @click=${() => this.handlePlayAll()}
                 >
-                    <wa-icon name="play"></wa-icon>
+                    <wa-icon name=${ICON_PLAY}></wa-icon>
                     Play All
+                </button>
+                <button
+                    class="play-all-button"
+                    @click=${() => this.handleShuffleAll()}
+                >
+                    <wa-icon name=${ICON_SHUFFLE}></wa-icon>
+                    Shuffle All
                 </button>
             </div>
             <div class="track-header">

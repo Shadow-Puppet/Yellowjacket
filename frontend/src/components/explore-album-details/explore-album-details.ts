@@ -43,6 +43,7 @@ import type * as autotagservice from '@go/autotagservice/models.js';
 import { confirmAction } from '../confirm-dialog/confirm-dialog';
 import { queueStore } from '../../store/queue-store';
 import type { QueueSource } from '../../store/queue-store';
+import { playAll } from '@utils/play-all';
 import { notificationStore } from '../../store/notification-store';
 import '../notifications/inline-notice';
 import {
@@ -2771,20 +2772,11 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
     /** Play what the user owns of this release, optionally shuffled. */
     private playOwned(shuffle: boolean): void {
-        const paths = this.ownedFilePaths();
-
         // The button is only rendered when there is something to play,
-        // so an empty set here is not a state the user can reach.
-        if (paths.length === 0) return;
-
-        // `shuffleStart` only picks a random first track when shuffle
-        // mode is *already* on — it does not turn it on — so the mode
-        // has to be set before the queue, not after.
-        if (shuffle && !queueStore.getState().shuffleMode) {
-            queueStore.toggleShuffle();
-        }
-
-        queueStore.setQueue(paths, 0, shuffle, this.queueSource());
+        // so an empty set here is not a state the user can reach.  The
+        // shuffle-mode semantics live in `playAll`, shared with the
+        // play-all/shuffle-all pair on every track list.
+        playAll(this.ownedFilePaths(), this.queueSource(), shuffle);
     }
 
     /** Append what the user owns of this release to the queue. */
