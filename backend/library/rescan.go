@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"yellowjacket/backend/coverart"
+	"yellowjacket/backend/database"
 )
 
 var errNoLibrariesConfigured = errors.New(
@@ -137,34 +138,12 @@ func (l *Library) clearLibraryTables() error {
 	// metadata for all linked tracks before audio_files are deleted.
 	// ON DELETE SET NULL will null out audio_file_id, converting them
 	// to phantoms that ResolvePhantomTracksAfterScan can re-link.
-	if _, err := tx.ExecContext(l.ctx, `
-		UPDATE playlist_tracks
-		SET
-			phantom_title = COALESCE(phantom_title, (
-				SELECT tm.title FROM track_metadata tm
-				WHERE tm.id = playlist_tracks.audio_file_id
-			)),
-			phantom_artist = COALESCE(phantom_artist, (
-				SELECT tm.artist_name FROM track_metadata tm
-				WHERE tm.id = playlist_tracks.audio_file_id
-			)),
-			phantom_album = COALESCE(phantom_album, (
-				SELECT tm.album FROM track_metadata tm
-				WHERE tm.id = playlist_tracks.audio_file_id
-			)),
-			phantom_duration_ms = COALESCE(phantom_duration_ms, (
-				SELECT af.length_milliseconds FROM audio_files af
-				WHERE af.id = playlist_tracks.audio_file_id
-			)),
-			phantom_file_path = COALESCE(phantom_file_path, (
-				SELECT af.file_path FROM audio_files af
-				WHERE af.id = playlist_tracks.audio_file_id
-			))
-		WHERE audio_file_id IS NOT NULL
-	`); err != nil {
-		return fmt.Errorf(
-			"could not preserve playlist track metadata: %w", err,
-		)
+	//
+	// Shared with the stale-shape retire in backend/database, which is
+	// the other path that empties this table and which did not do this
+	// (#183): the statement lives there so the two cannot drift again.
+	if err := database.PreservePlaylistPhantoms(l.ctx, tx, l.logger); err != nil {
+		return err
 	}
 
 	// Phase 2: the files.  file_genres cascades with them.

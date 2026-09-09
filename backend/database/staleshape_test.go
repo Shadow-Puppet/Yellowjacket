@@ -497,3 +497,180 @@ func TestParseCreateTablesReadsTheRealSchema(t *testing.T) {
 		}
 	}
 }
+
+// TestRetiringAudioFilesKeepsPlaylistContents is the symptom this
+// repair exists for: a playlist survived the retire as a row count and
+// nothing else.
+//
+// TestRetiringOwnedTablesDoesNotDangle already asserts the entry does
+// not keep a stale id, which is the *dangerous* half.  It is satisfied
+// just as well by an entry that says nothing at all, which is the
+// half that quietly emptied every playlist -- so this asserts what the
+// entry still knows, and specifically phantom_file_path, because that
+// is the column ResolvePhantomTracksAfterScan matches back against
+// audio_files.file_path.
+//
+// Note the seed drops `comment`, not `artist_credit`: the mutation has
+// to leave `track_metadata` standing, since a real launch reaches the
+// retire with the view the previous launch created.  A test that drops
+// the view first is testing the skip path, not this one.
+func TestRetiringAudioFilesKeepsPlaylistContents(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t, t.TempDir())
+
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+
+	if err := applySchema(ctx, db); err != nil {
+		t.Fatalf("applySchema: %v", err)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO playlists (id, name) VALUES (1, 'keepme');
+		INSERT INTO libraries (id, name, path) VALUES (0, 'test', '/music');
+		INSERT INTO artists (id, name) VALUES (3, 'Aurora Fields');
+		INSERT INTO cover_art (id, file_path, mime_type)
+			VALUES (9, 'covers/7.jpg', 'image/jpeg');
+		INSERT INTO genres (id, name) VALUES (5, 'Ambient');
+		INSERT INTO albums (id, name, artist_id, cover_art_id)
+			VALUES (4, 'Tideline', 3, 9);
+		INSERT INTO audio_files
+			(id, file_path, file_type_id, length_milliseconds,
+			 title, artist_credit, artist_id, album_id)
+			VALUES (7, '/music/a.flac', 1, 1000,
+			        'Slack Water', 'Aurora Fields', 3, 4);
+		INSERT INTO file_genres (audio_file_id, genre_id) VALUES (7, 5);
+		INSERT INTO playlist_tracks (playlist_id, audio_file_id, position)
+			VALUES (1, 7, 0);
+		ALTER TABLE audio_files DROP COLUMN comment;
+	`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if err := retireStaleTables(ctx, db, testLogger()); err != nil {
+		t.Fatalf("retire: %v", err)
+	}
+
+	if err := applySchema(ctx, db); err != nil {
+		t.Fatalf("applySchema: %v", err)
+	}
+
+	var (
+		path, title, artist, album, genre, cover sql.NullString
+		duration                                 sql.NullInt64
+	)
+
+	if err := db.QueryRowContext(ctx, `
+		SELECT phantom_file_path, phantom_title, phantom_artist,
+		       phantom_album, phantom_duration_ms, phantom_genre,
+		       phantom_cover_art_path
+		FROM playlist_tracks WHERE playlist_id = 1
+	`).Scan(&path, &title, &artist, &album, &duration, &genre, &cover); err != nil {
+		t.Fatalf("read the surviving entry: %v", err)
+	}
+
+	// The one that matters: without it the entry can never be re-linked
+	// by the rescan the retire itself provokes.
+	if path.String != "/music/a.flac" {
+		t.Fatalf(
+			"phantom_file_path is %q, want %q -- the playlist entry "+
+				"cannot be re-linked and the playlist is empty for good",
+			path.String, "/music/a.flac",
+		)
+	}
+
+	if title.String != "Slack Water" {
+		t.Errorf("phantom_title is %q, want %q", title.String, "Slack Water")
+	}
+
+	if artist.String != "Aurora Fields" {
+		t.Errorf("phantom_artist is %q, want %q", artist.String, "Aurora Fields")
+	}
+
+	if album.String != "Tideline" {
+		t.Errorf("phantom_album is %q, want %q", album.String, "Tideline")
+	}
+
+	if duration.Int64 != 1000 {
+		t.Errorf("phantom_duration_ms is %d, want 1000", duration.Int64)
+	}
+
+	if genre.String != "Ambient" {
+		t.Errorf("phantom_genre is %q, want %q", genre.String, "Ambient")
+	}
+
+	if cover.String != "covers/7.jpg" {
+		t.Errorf("phantom_cover_art_path is %q, want %q", cover.String, "covers/7.jpg")
+	}
+}
+
+// TestRetiringAudioFilesKeepsPathsWhenTheViewCannotAnswer is the case
+// that broke cmd/indexbuild: this repair runs *before* applySchema, so
+// `track_metadata` is whatever the last launch declared while
+// `audio_files` is whatever the launch before that left behind, and a
+// view over columns the table no longer has does not read as empty --
+// it errors.
+//
+// The pre-013 stub shape below is the real one that fixture carries.
+// What must survive is phantom_file_path, because `file_path` is the
+// table's natural key and has been in every shape it ever had; the
+// display columns are allowed to be absent, and the open must not fail.
+func TestRetiringAudioFilesKeepsPathsWhenTheViewCannotAnswer(t *testing.T) {
+	ctx := context.Background()
+	db := openRaw(t, t.TempDir())
+
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+
+	if err := applySchema(ctx, db); err != nil {
+		t.Fatalf("applySchema: %v", err)
+	}
+
+	// The rows go in *after* the reshape: dropping audio_files with
+	// foreign keys on would fire the ON DELETE SET NULL and null the
+	// entry this test is about, which would pass for the wrong reason.
+	if _, err := db.ExecContext(ctx, `
+		DROP TABLE audio_files;
+		CREATE TABLE audio_files (
+			id           INTEGER PRIMARY KEY,
+			file_path    TEXT NOT NULL UNIQUE,
+			recording_id INTEGER
+		);
+		INSERT INTO playlists (id, name) VALUES (1, 'keepme');
+		INSERT INTO audio_files (id, file_path) VALUES (7, '/music/a.flac');
+		INSERT INTO playlist_tracks (playlist_id, audio_file_id, position)
+			VALUES (1, 7, 0);
+	`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// The symptom this guards: the repair must not turn a recoverable
+	// database into one the app refuses to open.
+	if err := retireStaleTables(ctx, db, testLogger()); err != nil {
+		t.Fatalf(
+			"the retire failed on a view it could not read, so the app "+
+				"would not open at all: %v", err,
+		)
+	}
+
+	if err := applySchema(ctx, db); err != nil {
+		t.Fatalf("applySchema: %v", err)
+	}
+
+	var path sql.NullString
+	if err := db.QueryRowContext(ctx,
+		"SELECT phantom_file_path FROM playlist_tracks WHERE playlist_id = 1",
+	).Scan(&path); err != nil {
+		t.Fatalf("read the surviving entry: %v", err)
+	}
+
+	if path.String != "/music/a.flac" {
+		t.Fatalf(
+			"phantom_file_path is %q, want %q -- the display half being "+
+				"unavailable must not cost the entry its one re-link key",
+			path.String, "/music/a.flac",
+		)
+	}
+}

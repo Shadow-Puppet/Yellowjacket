@@ -662,19 +662,19 @@ func TestSmartPlaylistColumns(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Migration 10 — play history tracking
+// Listening events tracking
 // ---------------------------------------------------------------------------
 
-func TestPlayHistoryTable(t *testing.T) {
+func TestListeningEventsTable(t *testing.T) {
 	t.Parallel()
 
 	db := NewTestDB(t)
 
-	// Verify play_history table exists.
+	// Verify listening_events table exists.
 	var tableCount int64
 
 	tblRows, err := db.QueryContext(
-		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='play_history'",
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='listening_events'",
 	)
 	if err != nil {
 		t.Fatalf("query sqlite_master: %v", err)
@@ -695,12 +695,14 @@ func TestPlayHistoryTable(t *testing.T) {
 	_ = tblRows.Close()
 
 	if tableCount != 1 {
-		t.Errorf("play_history table count = %d, want 1", tableCount)
+		t.Errorf("listening_events table count = %d, want 1", tableCount)
 	}
 
-	// Verify audio_files has play_count and last_played columns.
+	// Verify audio_files has the denormalized listening counters.
 	hasPlayCount := false
 	hasLastPlayed := false
+	hasSkipCount := false
+	hasLastSkipped := false
 
 	colRows, err := db.QueryContext("PRAGMA table_info(audio_files)")
 	if err != nil {
@@ -732,6 +734,14 @@ func TestPlayHistoryTable(t *testing.T) {
 		if name == "last_played" {
 			hasLastPlayed = true
 		}
+
+		if name == "skip_count" {
+			hasSkipCount = true
+		}
+
+		if name == "last_skipped" {
+			hasLastSkipped = true
+		}
 	}
 
 	_ = colRows.Close()
@@ -742,6 +752,14 @@ func TestPlayHistoryTable(t *testing.T) {
 
 	if !hasLastPlayed {
 		t.Error("audio_files missing last_played column")
+	}
+
+	if !hasSkipCount {
+		t.Error("audio_files missing skip_count column")
+	}
+
+	if !hasLastSkipped {
+		t.Error("audio_files missing last_skipped column")
 	}
 
 	// Verify track_metadata VIEW includes play_count and last_played.
@@ -783,7 +801,7 @@ func TestPlayHistoryTable(t *testing.T) {
 		t.Error("track_metadata VIEW missing last_played column")
 	}
 
-	// Round-trip: insert a play_history row and verify play_count update.
+	// Round-trip: insert a listening_events row and verify play_count update.
 	// First, set up test data. The test DB already has library id=0.
 	InsertTestTrack(t, db, TestTrack{
 		FilePath:    "/test/play_history.mp3",
@@ -821,12 +839,12 @@ func TestPlayHistoryTable(t *testing.T) {
 		t.Errorf("initial play_count = %d, want 0", playCount)
 	}
 
-	// Insert a play_history row and update play_count.
+	// Insert a listening_events row (kind defaults to 'complete').
 	_, err = db.ExecContext(
-		"INSERT INTO play_history (audio_file_id) VALUES (1)",
+		"INSERT INTO listening_events (audio_file_id, kind) VALUES (1, 'complete')",
 	)
 	if err != nil {
-		t.Fatalf("insert play_history: %v", err)
+		t.Fatalf("insert listening_events: %v", err)
 	}
 
 	_, err = db.ExecContext(

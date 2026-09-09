@@ -245,6 +245,13 @@ func dropDeferred(
 	ctx context.Context, db *sql.DB, logger *slog.Logger,
 	drop map[string]string,
 ) error {
+	// Asked before the transaction opens, because the answer is about
+	// which tables are live and that cannot change underneath us here.
+	preserve, err := shouldPreservePhantoms(ctx, db, drop)
+	if err != nil {
+		return err
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("could not begin the retire transaction: %w", err)
@@ -254,6 +261,22 @@ func dropDeferred(
 
 	if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
 		return fmt.Errorf("could not defer foreign keys: %w", err)
+	}
+
+	// Before any drop, so every entry still has a track to read.  It is
+	// in this transaction rather than beside it because the preservation
+	// and the delete have to succeed or fail together: a commit that
+	// dropped the files without the phantoms is the bug, and a commit
+	// that wrote phantoms without dropping anything is a lie about rows
+	// that are still there.
+	if preserve {
+		logger.Info(
+			"preserving playlist entries across the retire of audio_files",
+		)
+
+		if err := PreservePlaylistPhantoms(ctx, tx, logger); err != nil {
+			return err
+		}
 	}
 
 	// Sorted, so a failure is reproducible.  Map order is random, and a
@@ -281,6 +304,38 @@ func dropDeferred(
 	}
 
 	return nil
+}
+
+// shouldPreservePhantoms reports whether this retire is about to take
+// `audio_files` out from under the playlists.
+//
+// The `playlist_tracks` check is not defensive padding.  This runs
+// *before* applySchema, which is the moment the schema is by definition
+// mid-repair, and the preservation reads a table it does not drop.  A
+// database old enough not to have it would otherwise fail here, and
+// failing here means the app does not open at all -- while nothing is
+// lost by skipping, since an absent `playlist_tracks` holds no
+// playlists to save.
+//
+// It deliberately does *not* ask after `track_metadata`.  Whether that
+// view can answer is PreservePlaylistPhantoms's own business, because a
+// view broken against an older `audio_files` is a state this function
+// cannot detect without hitting the same error it is trying to avoid:
+// pragma_table_info on such a view errors rather than reporting no
+// columns.
+func shouldPreservePhantoms(
+	ctx context.Context, db *sql.DB, drop map[string]string,
+) (bool, error) {
+	if _, going := drop["audio_files"]; !going {
+		return false, nil
+	}
+
+	cols, err := liveColumns(ctx, db, "playlist_tracks")
+	if err != nil {
+		return false, err
+	}
+
+	return len(cols) > 0, nil
 }
 
 // staleReason reports why a live table disagrees with its declaration,

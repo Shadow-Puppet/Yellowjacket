@@ -39,7 +39,7 @@ INSERT INTO audio_files (
   ?, ?, ?, ?, ?, ?,
   ?, ?, ?, ?, ?
 )
-RETURNING id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status
+RETURNING id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, skip_count, last_skipped, tag_status
 `
 
 type CreateAudioFileParams struct {
@@ -135,6 +135,8 @@ func (q *Queries) CreateAudioFile(ctx context.Context, arg CreateAudioFileParams
 		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.SkipCount,
+		&i.LastSkipped,
 		&i.TagStatus,
 	)
 	return i, err
@@ -192,7 +194,7 @@ func (q *Queries) GetAllAudioFilePaths(ctx context.Context) ([]GetAllAudioFilePa
 
 const getAudioFile = `-- name: GetAudioFile :one
 
-SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE id = ? LIMIT 1
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, skip_count, last_skipped, tag_status FROM audio_files WHERE id = ? LIMIT 1
 `
 
 // ---------------------------------------------------------------------
@@ -228,13 +230,15 @@ func (q *Queries) GetAudioFile(ctx context.Context, id int64) (AudioFile, error)
 		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.SkipCount,
+		&i.LastSkipped,
 		&i.TagStatus,
 	)
 	return i, err
 }
 
 const getAudioFileByPath = `-- name: GetAudioFileByPath :one
-SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE file_path = ? LIMIT 1
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, skip_count, last_skipped, tag_status FROM audio_files WHERE file_path = ? LIMIT 1
 `
 
 func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (AudioFile, error) {
@@ -267,6 +271,8 @@ func (q *Queries) GetAudioFileByPath(ctx context.Context, filePath string) (Audi
 		&i.ModifiedAt,
 		&i.PlayCount,
 		&i.LastPlayed,
+		&i.SkipCount,
+		&i.LastSkipped,
 		&i.TagStatus,
 	)
 	return i, err
@@ -334,7 +340,7 @@ func (q *Queries) GetAudioFilesByPaths(ctx context.Context, paths []string) ([]G
 }
 
 const getAudioFilesInLibrary = `-- name: GetAudioFilesInLibrary :many
-SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, tag_status FROM audio_files WHERE library_id = ?
+SELECT id, file_path, library_id, file_type_id, length_milliseconds, sample_rate, bit_depth, channels, bitrate, file_size, title, artist_credit, artist_id, album_id, track_number, disc_number, total_tracks, year, composer, comment, recording_mbid, basename, group_key, modified_at, play_count, last_played, skip_count, last_skipped, tag_status FROM audio_files WHERE library_id = ?
 `
 
 func (q *Queries) GetAudioFilesInLibrary(ctx context.Context, libraryID int64) ([]AudioFile, error) {
@@ -373,6 +379,8 @@ func (q *Queries) GetAudioFilesInLibrary(ctx context.Context, libraryID int64) (
 			&i.ModifiedAt,
 			&i.PlayCount,
 			&i.LastPlayed,
+			&i.SkipCount,
+			&i.LastSkipped,
 			&i.TagStatus,
 		); err != nil {
 			return nil, err

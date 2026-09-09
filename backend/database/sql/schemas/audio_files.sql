@@ -68,8 +68,14 @@ CREATE TABLE IF NOT EXISTS audio_files (
   -- compared against the on-disk mtime during a scan to detect files
   -- another application retagged in place.
   modified_at        INTEGER NOT NULL DEFAULT 0,
+  -- Listening counts, denormalized from listening_events so the hot
+  -- read path (track list sort, shelves, smart playlists) never joins
+  -- a log table.  Authored: a rescan cannot rebuild them.  This is the
+  -- "MIXED KIND" half of audio_files the datamap notes.
   play_count         INTEGER NOT NULL DEFAULT 0,
   last_played        DATETIME,
+  skip_count         INTEGER NOT NULL DEFAULT 0,
+  last_skipped       DATETIME,
   tag_status         TEXT NOT NULL DEFAULT 'untagged'
     CHECK(tag_status IN (
       'untagged', 'auto_matched', 'user_confirmed', 'user_skipped_permanent'
