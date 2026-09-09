@@ -1193,17 +1193,32 @@ func (l *Library) pruneEmptyEntities() {
 		}
 	}
 
+	// Cover art after albums: a cover whose album just went is
+	// unreferenced, and leaving the row behind keeps its files exempt
+	// from the janitor's covers sweep forever (#247).
+	orphanedCovers, err := l.sweepOrphanedCoverArt(tx)
+	if err != nil {
+		l.logger.Warn("could not sweep orphaned cover art", "err", err)
+
+		return
+	}
+
 	if err := tx.Commit(); err != nil {
 		l.logger.Warn("could not commit entity cleanup", "err", err)
 
 		return
 	}
 
-	if len(albumIDs) > 0 || len(artistIDs) > 0 || len(genreIDs) > 0 {
+	// Post-commit: the rows are gone, so their files can go too.
+	l.removeCoverArtFiles(orphanedCovers)
+
+	if len(albumIDs) > 0 || len(artistIDs) > 0 || len(genreIDs) > 0 ||
+		len(orphanedCovers) > 0 {
 		l.logger.Info("pruned empty library entities",
 			"albums", len(albumIDs),
 			"artists", len(artistIDs),
 			"genres", len(genreIDs),
+			"covers", len(orphanedCovers),
 		)
 	}
 }

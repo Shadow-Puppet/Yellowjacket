@@ -320,43 +320,12 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 
 	genresRemoved, _ := result.RowsAffected()
 
-	// 15. Collect orphaned cover_art file paths for post-commit cleanup.
-	// SAFETY: Hand-crafted SELECT for orphaned cover art identification.
-	// Parameterless.
-	rows, err := tx.QueryContext(l.ctx,
-		`SELECT file_path FROM cover_art WHERE id NOT IN (
-			SELECT DISTINCT cover_art_id FROM albums
-			WHERE cover_art_id IS NOT NULL
-		)`)
+	// Collect and delete orphaned cover_art rows before the commit.  The
+	// shared helper is the one place this sweep lives, so the scan path,
+	// RemoveFromLibrary and this removal cannot drift (#247).
+	orphanedCoverArtPaths, err := l.sweepOrphanedCoverArt(tx)
 	if err != nil {
-		return nil, fmt.Errorf("could not query orphaned cover art: %w", err)
-	}
-
-	var orphanedCoverArtPaths []string
-
-	for rows.Next() {
-		var filePath string
-		if err := rows.Scan(&filePath); err != nil {
-			l.logger.Warn("could not scan cover art path", "err", err)
-
-			continue
-		}
-
-		orphanedCoverArtPaths = append(orphanedCoverArtPaths, filePath)
-	}
-
-	if err := rows.Close(); err != nil {
-		l.logger.Warn("could not close cover art rows", "err", err)
-	}
-
-	// 16. Delete orphaned cover_art rows.
-	// SAFETY: Hand-crafted orphan cleanup SQL. Parameterless.
-	if _, err := tx.ExecContext(l.ctx,
-		`DELETE FROM cover_art WHERE id NOT IN (
-			SELECT DISTINCT cover_art_id FROM albums
-			WHERE cover_art_id IS NOT NULL
-		)`); err != nil {
-		return nil, fmt.Errorf("could not delete orphaned cover_art: %w", err)
+		return nil, err
 	}
 
 	// 17. Delete the library's tagging queue.  tagging_items holds a
@@ -392,20 +361,9 @@ func (l *Library) RemoveLibrary(id int64) (*RemovalSummary, error) {
 	// avoids a costly full re-index of all remaining tracks (~10s for
 	// 25K tracks).
 
-	// 21. Post-commit: Delete orphaned cover art files and their sized
-	// variants.  Only the original is stored in cover_art.file_path; the
-	// _sm/_md/_lg thumbnails are derived filenames beside it, so they
-	// have to be removed by name or they accumulate forever.
-	for _, coverPath := range orphanedCoverArtPaths {
-		for _, path := range CoverArtFileSet(coverPath) {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				l.logger.Warn("could not remove orphaned cover art file",
-					"path", path,
-					"err", err,
-				)
-			}
-		}
-	}
+	// Post-commit: remove the orphaned cover art files and their sized
+	// variants.
+	l.removeCoverArtFiles(orphanedCoverArtPaths)
 
 	// 22. Post-commit: Compact queue.
 	if l.removalHooks.CompactQueue != nil {
