@@ -212,14 +212,14 @@ func TestLifetimesMatchSchema(t *testing.T) {
 
 // Authored data is unrecoverable, so it must never be removed as a side
 // effect of deleting owned data.  Cascade is allowed only where the
-// catalog explains why (play_history, queue_tracks); this test pins the
+// catalog explains why (listening_events, queue_tracks); this test pins the
 // set so a new cascade onto authored data is a deliberate decision.
 func TestAuthoredCascadesAreDeliberate(t *testing.T) {
 	t.Parallel()
 
 	allowed := map[string]bool{
-		"play_history": true,
-		"queue_tracks": true,
+		"listening_events": true,
+		"queue_tracks":     true,
 
 		// Download history is scoped to the library it imported into.
 		// When that library is removed the files it acquired go with

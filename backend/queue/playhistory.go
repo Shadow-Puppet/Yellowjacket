@@ -6,7 +6,7 @@ import (
 	"yellowjacket/backend/events"
 )
 
-// recordPlay inserts a play_history row and updates the denormalized
+// recordPlay inserts a listening_events row and updates the denormalized
 // play_count / last_played columns on audio_files. Called from
 // OnPlaybackFinished for the track that just finished.
 //
@@ -20,10 +20,12 @@ func (q *Queue) recordPlay(audioFileID int64) {
 
 	now := time.Now().UTC().Format(time.DateTime)
 
-	// Insert play_history row.
+	// Insert the listening event.  A natural finish is a 'complete' by
+	// construction; position/duration are the classifier's to fill once
+	// skips are recorded (see .planning/plans/active/021).
 	_, err := q.db.ExecContext(
-		`INSERT INTO play_history (audio_file_id, played_at)
-		 VALUES (?, ?)`,
+		`INSERT INTO listening_events (audio_file_id, kind, occurred_at)
+		 VALUES (?, 'complete', ?)`,
 		audioFileID, now,
 	)
 	if err != nil {

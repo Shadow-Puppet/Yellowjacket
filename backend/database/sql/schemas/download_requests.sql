@@ -66,14 +66,11 @@ CREATE TABLE IF NOT EXISTS download_requests (
     FOREIGN KEY(parent_id) REFERENCES download_requests(id) ON DELETE CASCADE
 );
 
--- idx_download_requests_{due,entity,parent} are deliberately NOT
--- declared here. This table name is reused from the old one-shot
--- attempt table (also called download_requests before the Want/Request
--- rename), so on an existing database this CREATE TABLE is a no-op
--- against a table that, at schema-pass time, is still shaped like the
--- OLD attempts table and lacks these columns entirely — an inline
--- CREATE INDEX here would fail outright rather than just no-op. See
--- migrateDownloadRename/ensureDownloadIndexes in
--- backend/database/download_rename_migration.go, which create these
--- once the rename has actually happened (or immediately, on a fresh
--- database where the columns exist from the start).
+CREATE INDEX IF NOT EXISTS idx_download_requests_due
+    ON download_requests(state, next_try_at);
+
+CREATE INDEX IF NOT EXISTS idx_download_requests_entity
+    ON download_requests(entity, state);
+
+CREATE INDEX IF NOT EXISTS idx_download_requests_parent
+    ON download_requests(parent_id) WHERE parent_id IS NOT NULL;

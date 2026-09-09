@@ -269,10 +269,11 @@ var tables = []Table{
 			"from owned files plus the LRCLIB backfill.",
 	},
 	{
-		Name: "play_history", Kind: Authored, Lifetime: Cascade,
-		Note: "Listening history. Authored, but intentionally cascades " +
-			"with its track — history for a file no longer in the library " +
-			"has nothing to point at.",
+		Name: "listening_events", Kind: Authored, Lifetime: Cascade,
+		Note: "Listening history, one row per track exit (complete, play " +
+			"or skip). Authored, but intentionally cascades with its " +
+			"track — history for a file no longer in the library has " +
+			"nothing to point at.",
 	},
 	{
 		Name: "player_state", Kind: Authored, Lifetime: Retained,

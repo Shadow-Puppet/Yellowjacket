@@ -45,8 +45,6 @@ CREATE INDEX IF NOT EXISTS idx_download_items_live
 CREATE INDEX IF NOT EXISTS idx_download_items_state
     ON download_items(state);
 
--- idx_download_items_download is deliberately NOT declared here: on an
--- existing database this table already exists at schema-pass time with
--- its old column still named request_id, so an inline CREATE INDEX on
--- download_id would fail outright. See ensureDownloadIndexes in
--- backend/database/download_rename_migration.go.
+-- ListDownloadItemsForDownload filters on the parent download.
+CREATE INDEX IF NOT EXISTS idx_download_items_download
+    ON download_items(download_id);

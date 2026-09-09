@@ -94,6 +94,8 @@ type AudioFile struct {
 	ModifiedAt         int64
 	PlayCount          int64
 	LastPlayed         sql.NullTime
+	SkipCount          int64
+	LastSkipped        sql.NullTime
 	TagStatus          string
 }
 
@@ -261,6 +263,15 @@ type Library struct {
 	AutotagWarningAcked int64
 }
 
+type ListeningEvent struct {
+	ID              int64
+	AudioFileID     int64
+	Kind            string
+	PositionSeconds int64
+	DurationSeconds int64
+	OccurredAt      time.Time
+}
+
 type Lyric struct {
 	AudioFileID   int64
 	Text          string
@@ -271,12 +282,6 @@ type Lyric struct {
 
 type LyricsIndex struct {
 	Lyrics string
-}
-
-type PlayHistory struct {
-	ID          int64
-	AudioFileID int64
-	PlayedAt    time.Time
 }
 
 type PlayerState struct {
@@ -312,15 +317,14 @@ type PlaylistTrack struct {
 }
 
 type Queue struct {
-	ID               int64
-	SourcePlaylistID sql.NullInt64
-	CurrentPosition  int64
-	ShuffleMode      bool
-	RepeatMode       string
-	ShuffleOrder     sql.NullString
-	SourceType       string
-	SourceID         int64
-	SourceLabel      string
+	ID              int64
+	CurrentPosition int64
+	ShuffleMode     bool
+	RepeatMode      string
+	ShuffleOrder    sql.NullString
+	SourceType      string
+	SourceID        int64
+	SourceLabel     string
 }
 
 type QueueTrack struct {
