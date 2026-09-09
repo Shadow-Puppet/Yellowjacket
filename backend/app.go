@@ -775,6 +775,7 @@ func (yj *YellowJacketApp) startJanitor() {
 	}
 
 	yj.janitor.Register(maintenance.ExpiredHTTPCacheJob(yj.database))
+	yj.janitor.Register(maintenance.StaleArtistMetadataJob(yj.database))
 	yj.janitor.Register(maintenance.OrphanedCoverFilesJob(
 		yj.database, coversDir, library.CoverArtFileSet,
 	))

@@ -628,3 +628,37 @@ func dirSize(dir string) (bytes, files int64) {
 
 	return bytes, files
 }
+
+// StaleArtistMetadataJob evicts long-lived artist metadata (bios, wiki
+// leads, relationships) for artists the user no longer has any reason
+// to keep around: not owned and holding no cached artwork.
+//
+// artist_metadata has no TTL by design — entity data changes rarely and
+// re-fetching spends someone else's rate limit — so without a sweep it
+// grows for the life of the install.  This is the "swept when the
+// artist is no longer referenced" contract the datamap always declared
+// for it and nothing ever performed (#248).
+func StaleArtistMetadataJob(db *database.DB) Job {
+	return Job{
+		Name:        "artist-metadata-sweep",
+		MinInterval: dailyInterval,
+		Run: func(_ context.Context) (Result, error) {
+			res, err := db.ExecContext(
+				`DELETE FROM artist_metadata
+				 WHERE mbid NOT IN (` + ownedArtistMBIDs + `)
+				   AND mbid NOT IN (
+				       SELECT artist_mbid FROM artist_images
+				   )`,
+			)
+			if err != nil {
+				return Result{}, fmt.Errorf(
+					"delete stale artist_metadata rows: %w", err,
+				)
+			}
+
+			rows, _ := res.RowsAffected()
+
+			return Result{RowsDeleted: rows}, nil
+		},
+	}
+}
