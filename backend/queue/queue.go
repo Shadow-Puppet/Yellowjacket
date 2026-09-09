@@ -1581,6 +1581,21 @@ func (q *Queue) dropSource() {
 	q.source = Source{}
 }
 
+// DropSourceForPlaylist clears the queue's "Playing from" label when
+// its source playlist is deleted.  A link back to a playlist that no
+// longer exists is worse than none, and the label otherwise survives
+// the deletion until the next SetQueue (#249).
+func (q *Queue) DropSourceForPlaylist(playlistID int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if (q.source.Type == "playlist" || q.source.Type == "smartPlaylist") &&
+		q.source.ID == playlistID {
+		q.dropSource()
+		q.persistState()
+	}
+}
+
 // commitMutation persists the current queue state after a mutation.
 // When reindex is true, track positions are renumbered first.
 // The caller must hold q.mu.

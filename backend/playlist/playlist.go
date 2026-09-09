@@ -134,6 +134,12 @@ type Service struct {
 	libraryDir    LibraryDirProvider
 	favoritesConf FavoritesConfigProvider
 
+	// onDeleted, when set, is called after a playlist is deleted so
+	// cross-cutting state that points at it (the queue's "Playing
+	// from" label) can stop pointing at a playlist that no longer
+	// exists.  Wired from app.go, like Library.SetRemovalHooks.
+	onDeleted func(playlistID int64)
+
 	// dataDirOverride, when non-empty, replaces the OS user data
 	// directory as the base for the playlists folder. Set by tests to
 	// keep M3U writes out of the real user data directory.
@@ -164,6 +170,17 @@ func (s *Service) SetFavoritesConfig(
 	defer s.mu.Unlock()
 
 	s.favoritesConf = provider
+}
+
+// SetOnPlaylistDeleted registers a callback invoked after a playlist is
+// deleted, for cross-cutting invalidation.
+//
+//wails:ignore // internal wiring, not part of the app's IPC surface.
+func (s *Service) SetOnPlaylistDeleted(onDeleted func(playlistID int64)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.onDeleted = onDeleted
 }
 
 // ServiceStartup is v3's service lifecycle hook: it runs once the
@@ -765,6 +782,17 @@ func (s *Service) DeletePlaylist(playlistID int64) error {
 	)
 
 	s.emitEvent(events.PlaylistDeleted, playlistID)
+
+	// Cross-cutting invalidation: the queue's "Playing from" label may
+	// point at this playlist, and a link to a playlist that no longer
+	// exists is worse than none.
+	s.mu.Lock()
+	onDeleted := s.onDeleted
+	s.mu.Unlock()
+
+	if onDeleted != nil {
+		onDeleted(playlistID)
+	}
 
 	// Recreate the default playlist if we just deleted it.
 	if s.defaultPlaylistID() == playlistID {

@@ -127,6 +127,11 @@ func (l *Library) RemoveFromLibrary(filePaths []string) (*RemovalResult, error) 
 			l.logger.Warn("could not delete FTS entry for removed track",
 				"path", row.FilePath, "id", row.ID, "err", err)
 		}
+
+		if err := l.db.DeleteLyricsIndex(row.ID); err != nil {
+			l.logger.Warn("could not delete lyrics index entry for removed track",
+				"path", row.FilePath, "id", row.ID, "err", err)
+		}
 	}
 
 	// Deleting an audio_files row cascades to queue_tracks, so the
