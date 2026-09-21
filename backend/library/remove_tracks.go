@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"yellowjacket/backend/database"
 	"yellowjacket/backend/events"
 )
 
@@ -56,6 +57,25 @@ func (l *Library) RemoveFromLibrary(filePaths []string) (*RemovalResult, error) 
 	txq := l.db.Queries.WithTx(tx)
 
 	var result RemovalResult
+
+	// Preserve the playlist entries before the rows go, so they survive
+	// as re-linkable phantoms rather than empty rows.  The track is
+	// excluded and will not be re-imported on its own, but a later full
+	// rescan clears the exclusion and this is what lets the entry
+	// re-link then — the same preservation every other path that empties
+	// audio_files performs (#246).
+	rowIDs := make([]int64, len(rows))
+	for i, row := range rows {
+		rowIDs[i] = row.ID
+	}
+
+	if err := database.PreservePlaylistPhantomsForFiles(
+		l.ctx, tx, rowIDs, l.logger,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"could not preserve playlist entries for removal: %w", err,
+		)
+	}
 
 	// Exclude every path the caller named, including one whose row has
 	// already gone: the user asked for that file to stay out, and a row

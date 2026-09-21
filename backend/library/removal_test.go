@@ -94,6 +94,57 @@ func countRows(
 	return n
 }
 
+// RemoveFromLibrary is the one path that empties a track *deliberately*:
+// the file stays on disk but is excluded, so nothing re-imports it.  The
+// playlist entry must still survive as a re-linkable phantom rather than
+// an empty row, because a later full rescan clears the exclusion and is
+// what re-links the entry then (#246).
+func TestRemoveFromLibrary_PreservesPlaylistPhantoms(t *testing.T) {
+	t.Parallel()
+
+	lib, db := setupTestLibrary(t)
+
+	seedRemovableLibrary(t, lib, "/nonexistent/cover.jpg")
+
+	if _, err := lib.db.ExecContext(
+		`INSERT INTO playlists (name) VALUES ('keepme')`,
+	); err != nil {
+		t.Fatalf("seed playlist: %v", err)
+	}
+
+	playlistID := queryInt(
+		t, db, `SELECT id FROM playlists WHERE name = 'keepme'`,
+	)
+
+	if _, err := lib.db.ExecContext(
+		`INSERT INTO playlist_tracks (playlist_id, audio_file_id, position)
+		 SELECT ?, id, 0 FROM audio_files
+		 WHERE file_path = '/music/song.mp3'`,
+		playlistID,
+	); err != nil {
+		t.Fatalf("seed playlist_tracks: %v", err)
+	}
+
+	if _, err := lib.RemoveFromLibrary([]string{"/music/song.mp3"}); err != nil {
+		t.Fatalf("RemoveFromLibrary: %v", err)
+	}
+
+	phantomPath := queryString(
+		t, db,
+		`SELECT phantom_file_path FROM playlist_tracks
+		 WHERE playlist_id = ?`,
+		playlistID,
+	)
+
+	if phantomPath != "/music/song.mp3" {
+		t.Fatalf(
+			"phantom_file_path is %q, want %q -- the entry cannot be "+
+				"re-linked after a later full rescan",
+			phantomPath, "/music/song.mp3",
+		)
+	}
+}
+
 // A library with tagging_items must still be removable.  tagging_items
 // FK-references libraries with no ON DELETE clause, so leaving those
 // rows behind fails the DELETE and rolls back the entire removal.
@@ -195,6 +246,56 @@ func TestCoverArtFileSet(t *testing.T) {
 	for i, w := range want {
 		if got[i] != w {
 			t.Errorf("path %d = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+// Removing the last track of an album must take the album's cover art
+// with it — both the row and every derived file — or the row keeps its
+// files exempt from the janitor's covers sweep forever (#247).
+func TestRemoveFromLibrary_DeletesOrphanedCoverArt(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+
+	dir := t.TempDir()
+
+	// The largest tier is what cover_art.file_path names; write every
+	// variant so the sweep has a real set to remove.
+	for _, tier := range thumbnailTiers {
+		p := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", tier.Suffix))
+		if err := os.WriteFile(p, []byte("img"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	cover := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", "_lg"))
+
+	seedRemovableLibrary(t, lib, cover)
+
+	// Link the album to the cover so it is not orphaned until the track
+	// (and with it the album) goes.
+	if _, err := lib.db.ExecContext(
+		`UPDATE albums SET cover_art_id =
+			(SELECT id FROM cover_art WHERE file_path = ?)
+		 WHERE name = 'Test Album'`,
+		cover,
+	); err != nil {
+		t.Fatalf("link cover art: %v", err)
+	}
+
+	if _, err := lib.RemoveFromLibrary([]string{"/music/song.mp3"}); err != nil {
+		t.Fatalf("RemoveFromLibrary: %v", err)
+	}
+
+	if n := countRows(t, lib, "cover_art"); n != 0 {
+		t.Errorf("cover_art has %d rows after removal, want 0", n)
+	}
+
+	for _, tier := range thumbnailTiers {
+		p := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", tier.Suffix))
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("cover art file still present: %s", filepath.Base(p))
 		}
 	}
 }
