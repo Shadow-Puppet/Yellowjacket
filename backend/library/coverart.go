@@ -3,6 +3,7 @@ package library
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"image"
@@ -67,6 +68,77 @@ func CoverArtFileSet(coverPath string) []string {
 	}
 
 	return paths
+}
+
+// sweepOrphanedCoverArt deletes the cover_art rows no album references
+// and returns their file paths, for the caller to remove from disk
+// after the transaction commits.  Cover art is referenced only by
+// albums.cover_art_id, so an orphan is a cover whose album is gone —
+// which is every album the caller just swept.
+//
+// One implementation because the scan path, RemoveFromLibrary and
+// RemoveLibrary all reach this state, and the scan side used to skip it
+// entirely while RemoveLibrary did it inline (#247).
+func (l *Library) sweepOrphanedCoverArt(tx *sql.Tx) ([]string, error) {
+	const orphanSQL = `
+		SELECT file_path FROM cover_art WHERE id NOT IN (
+			SELECT DISTINCT cover_art_id FROM albums
+			WHERE cover_art_id IS NOT NULL
+		)`
+
+	rows, err := tx.QueryContext(l.ctx, orphanSQL)
+	if err != nil {
+		return nil, fmt.Errorf("could not query orphaned cover art: %w", err)
+	}
+
+	var paths []string
+
+	for rows.Next() {
+		var filePath string
+
+		if err := rows.Scan(&filePath); err != nil {
+			l.logger.Warn("could not scan cover art path", "err", err)
+
+			continue
+		}
+
+		paths = append(paths, filePath)
+	}
+
+	// Close before the DELETE: the two run on the one writer connection.
+	if err := rows.Close(); err != nil {
+		l.logger.Warn("could not close cover art rows", "err", err)
+	}
+
+	if len(paths) > 0 {
+		if _, err := tx.ExecContext(l.ctx, `
+			DELETE FROM cover_art WHERE id NOT IN (
+				SELECT DISTINCT cover_art_id FROM albums
+				WHERE cover_art_id IS NOT NULL
+			)`); err != nil {
+			return nil, fmt.Errorf("could not delete orphaned cover_art: %w", err)
+		}
+	}
+
+	return paths, nil
+}
+
+// removeCoverArtFiles removes a cover original and its derived size
+// variants.  Only the original is stored in cover_art.file_path; the
+// _sm/_md/_lg tiers are derived filenames beside it, so they have to be
+// removed by name or they accumulate forever.
+func (l *Library) removeCoverArtFiles(coverPaths []string) {
+	for _, coverPath := range coverPaths {
+		for _, path := range CoverArtFileSet(coverPath) {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				l.logger.Warn(
+					"could not remove orphaned cover art file",
+					"path", path,
+					"err", err,
+				)
+			}
+		}
+	}
 }
 
 // saveCoverArt saves embedded cover art to the cache directory.

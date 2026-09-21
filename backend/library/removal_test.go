@@ -249,3 +249,53 @@ func TestCoverArtFileSet(t *testing.T) {
 		}
 	}
 }
+
+// Removing the last track of an album must take the album's cover art
+// with it — both the row and every derived file — or the row keeps its
+// files exempt from the janitor's covers sweep forever (#247).
+func TestRemoveFromLibrary_DeletesOrphanedCoverArt(t *testing.T) {
+	t.Parallel()
+
+	lib, _ := setupTestLibrary(t)
+
+	dir := t.TempDir()
+
+	// The largest tier is what cover_art.file_path names; write every
+	// variant so the sweep has a real set to remove.
+	for _, tier := range thumbnailTiers {
+		p := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", tier.Suffix))
+		if err := os.WriteFile(p, []byte("img"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+
+	cover := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", "_lg"))
+
+	seedRemovableLibrary(t, lib, cover)
+
+	// Link the album to the cover so it is not orphaned until the track
+	// (and with it the album) goes.
+	if _, err := lib.db.ExecContext(
+		`UPDATE albums SET cover_art_id =
+			(SELECT id FROM cover_art WHERE file_path = ?)
+		 WHERE name = 'Test Album'`,
+		cover,
+	); err != nil {
+		t.Fatalf("link cover art: %v", err)
+	}
+
+	if _, err := lib.RemoveFromLibrary([]string{"/music/song.mp3"}); err != nil {
+		t.Fatalf("RemoveFromLibrary: %v", err)
+	}
+
+	if n := countRows(t, lib, "cover_art"); n != 0 {
+		t.Errorf("cover_art has %d rows after removal, want 0", n)
+	}
+
+	for _, tier := range thumbnailTiers {
+		p := filepath.Join(dir, coverart.SizedFilename("abc123.jpg", tier.Suffix))
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Errorf("cover art file still present: %s", filepath.Base(p))
+		}
+	}
+}
