@@ -734,3 +734,52 @@ func TestStaleArtistMetadataJob(t *testing.T) {
 		}
 	}
 }
+
+// TestStaleSearchClicksJob deletes only the clicks old enough to have
+// left the retention window (#249).
+func TestStaleSearchClicksJob(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	count := func(mbid string) int {
+		t.Helper()
+
+		var n int
+		if err := db.QueryRowWriter(
+			"SELECT COUNT(*) FROM search_clicks WHERE entity_mbid = ?", mbid,
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", mbid, err)
+		}
+
+		return n
+	}
+
+	seed := func(query, mbid, lastClicked string) {
+		t.Helper()
+
+		if _, err := db.ExecContext(
+			`INSERT INTO search_clicks
+			   (query, entity_mbid, entity_type, click_count, last_clicked)
+			 VALUES (?, ?, 'recording', 1, ?)`,
+			query, mbid, lastClicked,
+		); err != nil {
+			t.Fatalf("seed search_clicks: %v", err)
+		}
+	}
+
+	seed("tide", "aaaa", "2024-01-01 00:00:00") // stale
+	seed("tide", "bbbb", "2999-01-01 00:00:00") // recent
+
+	if _, err := StaleSearchClicksJob(db).Run(context.Background()); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	if n := count("bbbb"); n != 1 {
+		t.Errorf("recent click was deleted: %d rows, want 1", n)
+	}
+
+	if n := count("aaaa"); n != 0 {
+		t.Errorf("stale click survived: %d rows, want 0", n)
+	}
+}

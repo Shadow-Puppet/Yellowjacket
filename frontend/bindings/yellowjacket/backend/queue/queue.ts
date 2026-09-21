@@ -57,6 +57,16 @@ export function CycleRepeat(): $CancellablePromise<void> {
 }
 
 /**
+ * DropSourceForPlaylist clears the queue's "Playing from" label when
+ * its source playlist is deleted.  A link back to a playlist that no
+ * longer exists is worse than none, and the label otherwise survives
+ * the deletion until the next SetQueue (#249).
+ */
+export function DropSourceForPlaylist(playlistID: number): $CancellablePromise<void> {
+    return $Call.ByID(1435106374, playlistID);
+}
+
+/**
  * EmitCurrentState emits the current queue state to the frontend.
  * This is called after the frontend DOM is ready.
  */

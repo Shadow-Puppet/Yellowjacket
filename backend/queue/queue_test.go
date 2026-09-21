@@ -535,3 +535,35 @@ func TestCycleRepeat_CyclesThroughModes(t *testing.T) {
 		t.Errorf("after third cycle: got %q, want %q", state.RepeatMode, RepeatOff)
 	}
 }
+
+// TestDropSourceForPlaylist clears the "Playing from" label when the
+// queue's source playlist is deleted, and leaves it alone otherwise
+// (#249).
+func TestDropSourceForPlaylist(t *testing.T) {
+	t.Parallel()
+
+	q, db := setupTestQueue(t)
+	paths := seedAudioFiles(t, db, 2)
+
+	q.SetQueue(paths, 0, false, Source{Type: "playlist", ID: 42, Label: "Road Trip"})
+	q.DropSourceForPlaylist(42)
+
+	if got := q.GetState().Source; got != (Source{}) {
+		t.Errorf("source = %+v, want empty after playlist 42 deleted", got)
+	}
+}
+
+func TestDropSourceForPlaylistIgnoresOtherPlaylists(t *testing.T) {
+	t.Parallel()
+
+	q, db := setupTestQueue(t)
+	paths := seedAudioFiles(t, db, 2)
+
+	source := Source{Type: "smartPlaylist", ID: 42, Label: "Road Trip"}
+	q.SetQueue(paths, 0, false, source)
+	q.DropSourceForPlaylist(7)
+
+	if got := q.GetState().Source; got != source {
+		t.Errorf("source = %+v, want %+v unchanged for a different playlist", got, source)
+	}
+}
