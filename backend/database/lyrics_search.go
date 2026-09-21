@@ -151,14 +151,26 @@ func (d *DB) SetLyrics(audioFileID int64, lyrics, source, recordingMBID string) 
 	return d.upsertLyricsIndex(audioFileID, lyrics)
 }
 
-// upsertLyricsIndex refreshes a single file's entry in the contentless
-// lyrics_index.  contentless_delete=1 makes the DELETE valid; an empty
-// lyrics string leaves the row deleted.
-func (d *DB) upsertLyricsIndex(audioFileID int64, lyrics string) error {
+// DeleteLyricsIndex removes one file's entry from the contentless
+// lyrics_index.  It is called wherever a file row is deleted — the
+// `lyrics` table cascades with its file, but the FTS entry does not and
+// would otherwise accumulate for the life of the install (#249).
+func (d *DB) DeleteLyricsIndex(audioFileID int64) error {
 	if _, err := d.db.ExecContext(d.Ctx,
 		"DELETE FROM lyrics_index WHERE rowid = ?", audioFileID,
 	); err != nil {
 		return fmt.Errorf("could not delete lyrics_index row: %w", err)
+	}
+
+	return nil
+}
+
+// upsertLyricsIndex refreshes a single file's entry in the contentless
+// lyrics_index.  contentless_delete=1 makes the DELETE valid; an empty
+// lyrics string leaves the row deleted.
+func (d *DB) upsertLyricsIndex(audioFileID int64, lyrics string) error {
+	if err := d.DeleteLyricsIndex(audioFileID); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(lyrics) == "" {

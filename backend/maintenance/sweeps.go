@@ -628,3 +628,69 @@ func dirSize(dir string) (bytes, files int64) {
 
 	return bytes, files
 }
+
+// StaleArtistMetadataJob evicts long-lived artist metadata (bios, wiki
+// leads, relationships) for artists the user no longer has any reason
+// to keep around: not owned and holding no cached artwork.
+//
+// artist_metadata has no TTL by design — entity data changes rarely and
+// re-fetching spends someone else's rate limit — so without a sweep it
+// grows for the life of the install.  This is the "swept when the
+// artist is no longer referenced" contract the datamap always declared
+// for it and nothing ever performed (#248).
+func StaleArtistMetadataJob(db *database.DB) Job {
+	return Job{
+		Name:        "artist-metadata-sweep",
+		MinInterval: dailyInterval,
+		Run: func(_ context.Context) (Result, error) {
+			res, err := db.ExecContext(
+				`DELETE FROM artist_metadata
+				 WHERE mbid NOT IN (` + ownedArtistMBIDs + `)
+				   AND mbid NOT IN (
+				       SELECT artist_mbid FROM artist_images
+				   )`,
+			)
+			if err != nil {
+				return Result{}, fmt.Errorf(
+					"delete stale artist_metadata rows: %w", err,
+				)
+			}
+
+			rows, _ := res.RowsAffected()
+
+			return Result{RowsDeleted: rows}, nil
+		},
+	}
+}
+
+// searchClicksRetention is how long a search-click ranking signal stays
+// useful.  search_clicks is authored behavioural data — nothing that
+// owns a row ever drops it — so age is the ceiling that keeps the table
+// from growing without bound for the life of the install (#249).
+const searchClicksRetention = "-180 days"
+
+// StaleSearchClicksJob deletes search-click ranking rows older than the
+// retention window.  Rows are small and the table grows slowly, so this
+// runs daily and does almost nothing most runs.
+func StaleSearchClicksJob(db *database.DB) Job {
+	return Job{
+		Name:        "search-clicks-sweep",
+		MinInterval: dailyInterval,
+		Run: func(_ context.Context) (Result, error) {
+			res, err := db.ExecContext(
+				`DELETE FROM search_clicks
+				 WHERE last_clicked < datetime('now', ?)`,
+				searchClicksRetention,
+			)
+			if err != nil {
+				return Result{}, fmt.Errorf(
+					"delete stale search_clicks rows: %w", err,
+				)
+			}
+
+			rows, _ := res.RowsAffected()
+
+			return Result{RowsDeleted: rows}, nil
+		},
+	}
+}

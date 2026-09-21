@@ -499,6 +499,10 @@ func (yj *YellowJacketApp) OnStartup(ctx context.Context) {
 		PostRemove: yj.explore.InvalidateLibrarySync,
 	})
 
+	// A deleted playlist must not leave the queue's "Playing from"
+	// label pointing at it.
+	yj.playlist.SetOnPlaylistDeleted(yj.queue.DropSourceForPlaylist)
+
 	// Register playback finished handler to drive queue auto-advance.
 	yj.player.SetPlaybackFinishedHandler(yj.queue.OnPlaybackFinished)
 
@@ -775,6 +779,8 @@ func (yj *YellowJacketApp) startJanitor() {
 	}
 
 	yj.janitor.Register(maintenance.ExpiredHTTPCacheJob(yj.database))
+	yj.janitor.Register(maintenance.StaleArtistMetadataJob(yj.database))
+	yj.janitor.Register(maintenance.StaleSearchClicksJob(yj.database))
 	yj.janitor.Register(maintenance.OrphanedCoverFilesJob(
 		yj.database, coversDir, library.CoverArtFileSet,
 	))

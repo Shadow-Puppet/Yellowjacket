@@ -1034,10 +1034,20 @@ func (l *Library) scanInternal(
 				}
 			}
 
-			// Remove from FTS5 search index.
+			// Remove from FTS5 search index and the lyrics index.
 			if err := l.db.DeleteSearchIndex(f.ID); err != nil {
 				l.logger.Warn(
 					"failed to delete FTS entry for orphan",
+					"id", f.ID,
+					"err", err,
+				)
+
+				metrics.addWarning(path, "orphan", err)
+			}
+
+			if err := l.db.DeleteLyricsIndex(f.ID); err != nil {
+				l.logger.Warn(
+					"failed to delete lyrics index entry for orphan",
 					"id", f.ID,
 					"err", err,
 				)

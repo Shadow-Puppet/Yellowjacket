@@ -666,3 +666,120 @@ func TestExpiredHTTPCacheJob_TrimsToBudget(t *testing.T) {
 		t.Errorf("kept %q, want the longest-lived row", kept)
 	}
 }
+
+// TestStaleArtistMetadataJob pins the sweep's two keep rules: an owned
+// artist's metadata survives, a browsed artist's survives while it still
+// holds cached artwork, and everything else goes (#248).
+func TestStaleArtistMetadataJob(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	const (
+		ownedMBID   = "11111111-1111-1111-1111-111111111111"
+		browsedMBID = "22222222-2222-2222-2222-222222222222"
+		staleMBID   = "33333333-3333-3333-3333-333333333333"
+	)
+
+	// The owned artist is in the library - which means a *file* says
+	// so.  An artists row on its own is not ownership.
+	database.InsertTestTrack(t, db, database.TestTrack{
+		FilePath:   "/music/owned.mp3",
+		Artist:     "Owned",
+		ArtistMBID: ownedMBID,
+	})
+
+	for _, mbid := range []string{ownedMBID, browsedMBID, staleMBID} {
+		if _, err := db.ExecContext(
+			`INSERT INTO artist_metadata (mbid, source, data, fetched_at)
+			 VALUES (?, 'wikidata-p18', x'00', CURRENT_TIMESTAMP)`,
+			mbid,
+		); err != nil {
+			t.Fatalf("seed artist_metadata for %s: %v", mbid, err)
+		}
+	}
+
+	// The browsed artist holds cached artwork, so its metadata is still
+	// referenced and must survive.
+	if _, err := db.ExecContext(
+		`INSERT INTO artist_images
+		   (artist_mbid, source, source_url, file_path)
+		 VALUES (?, 'test', 'http://x', '/art/primary.jpg')`,
+		browsedMBID,
+	); err != nil {
+		t.Fatalf("seed artist_images: %v", err)
+	}
+
+	if _, err := StaleArtistMetadataJob(db).Run(context.Background()); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	for _, tc := range []struct {
+		mbid string
+		want int
+	}{
+		{ownedMBID, 1},
+		{browsedMBID, 1},
+		{staleMBID, 0},
+	} {
+		var n int
+		if err := db.QueryRowWriter(
+			"SELECT COUNT(*) FROM artist_metadata WHERE mbid = ?", tc.mbid,
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", tc.mbid, err)
+		}
+
+		if n != tc.want {
+			t.Errorf("artist_metadata rows for %s = %d, want %d", tc.mbid, n, tc.want)
+		}
+	}
+}
+
+// TestStaleSearchClicksJob deletes only the clicks old enough to have
+// left the retention window (#249).
+func TestStaleSearchClicksJob(t *testing.T) {
+	t.Parallel()
+
+	db := database.NewTestDB(t)
+
+	count := func(mbid string) int {
+		t.Helper()
+
+		var n int
+		if err := db.QueryRowWriter(
+			"SELECT COUNT(*) FROM search_clicks WHERE entity_mbid = ?", mbid,
+		).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", mbid, err)
+		}
+
+		return n
+	}
+
+	seed := func(query, mbid, lastClicked string) {
+		t.Helper()
+
+		if _, err := db.ExecContext(
+			`INSERT INTO search_clicks
+			   (query, entity_mbid, entity_type, click_count, last_clicked)
+			 VALUES (?, ?, 'recording', 1, ?)`,
+			query, mbid, lastClicked,
+		); err != nil {
+			t.Fatalf("seed search_clicks: %v", err)
+		}
+	}
+
+	seed("tide", "aaaa", "2024-01-01 00:00:00") // stale
+	seed("tide", "bbbb", "2999-01-01 00:00:00") // recent
+
+	if _, err := StaleSearchClicksJob(db).Run(context.Background()); err != nil {
+		t.Fatalf("run job: %v", err)
+	}
+
+	if n := count("bbbb"); n != 1 {
+		t.Errorf("recent click was deleted: %d rows, want 1", n)
+	}
+
+	if n := count("aaaa"); n != 0 {
+		t.Errorf("stale click survived: %d rows, want 0", n)
+	}
+}
