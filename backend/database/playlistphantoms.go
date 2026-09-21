@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"strings"
 )
 
 // Preserving a playlist entry across the loss of its track is two
@@ -89,12 +90,14 @@ const (
 // metadata on the entry itself, so the entry survives the rows being
 // deleted underneath it.
 //
-// Every path that empties `audio_files` must call this first, inside
-// the same transaction as the delete.  There are two such paths and
-// they had drifted: the full rescan in backend/library did this and the
-// stale-shape retire in this package did not, so the *documented*
-// repair ("delete and rescan") preserved playlists while the automatic
-// one that exists to spare the user that work silently emptied them.
+// Every path that empties `audio_files` must call this (or the scoped
+// variant below) first, inside the same transaction as the delete.
+// These paths have drifted before: the full rescan in backend/library
+// did this and the stale-shape retire in this package did not, so the
+// *documented* repair ("delete and rescan") preserved playlists while
+// the automatic one that exists to spare the user that work silently
+// emptied them (#183).  The incremental scan's orphan cleanup and
+// RemoveFromLibrary drifted the same way and are #246.
 //
 // The display half is skipped, with a warning, when `track_metadata`
 // cannot answer -- see the note above.  Skipping it costs a phantom
@@ -103,13 +106,39 @@ const (
 func PreservePlaylistPhantoms(
 	ctx context.Context, tx *sql.Tx, logger *slog.Logger,
 ) error {
-	if _, err := tx.ExecContext(ctx, preservePhantomPathSQL); err != nil {
+	return preservePlaylistPhantoms(ctx, tx, nil, logger)
+}
+
+// PreservePlaylistPhantomsForFiles is PreservePlaylistPhantoms scoped to
+// the given audio file ids, for the two removal paths that delete a
+// known subset of the table rather than all of it: the incremental
+// scan's orphan cleanup and RemoveFromLibrary.  A bulk pass there would
+// rewrite every linked playlist row on every scan for nothing.
+func PreservePlaylistPhantomsForFiles(
+	ctx context.Context, tx *sql.Tx, ids []int64, logger *slog.Logger,
+) error {
+	return preservePlaylistPhantoms(ctx, tx, ids, logger)
+}
+
+func preservePlaylistPhantoms(
+	ctx context.Context, tx *sql.Tx, ids []int64, logger *slog.Logger,
+) error {
+	clause, args, skip := phantomIDFilter(ids)
+	if skip {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(
+		ctx, preservePhantomPathSQL+clause, args...,
+	); err != nil {
 		return fmt.Errorf(
 			"could not preserve playlist track file paths: %w", err,
 		)
 	}
 
-	if _, err := tx.ExecContext(ctx, preservePhantomDisplaySQL); err != nil {
+	if _, err := tx.ExecContext(
+		ctx, preservePhantomDisplaySQL+clause, args...,
+	); err != nil {
 		// A failed statement does not roll back a SQLite transaction,
 		// so the path half above stands and the entries remain
 		// re-linkable.
@@ -122,4 +151,27 @@ func PreservePlaylistPhantoms(
 	}
 
 	return nil
+}
+
+// phantomIDFilter builds the extra WHERE terms and arguments that scope
+// a preservation pass to a set of audio file ids.  A nil ids returns the
+// empty clause (a bulk run over every linked entry); an empty slice
+// reports skip, since there is nothing to preserve.
+func phantomIDFilter(ids []int64) (clause string, args []any, skip bool) {
+	switch {
+	case ids == nil:
+		return "", nil, false
+	case len(ids) == 0:
+		return "", nil, true
+	}
+
+	clause = " AND audio_file_id IN (" +
+		strings.Repeat("?,", len(ids)-1) + "?)"
+
+	args = make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	return clause, args, false
 }

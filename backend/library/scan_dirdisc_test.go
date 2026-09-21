@@ -231,3 +231,98 @@ func TestScan_MultipleDirectoriesDoNotCrossContaminate(t *testing.T) {
 		t.Errorf("Album A and Album B must not share a group_key: %+v", keys)
 	}
 }
+
+// TestScan_OrphanCleanupPreservesPlaylistPhantoms guards #246: a file
+// deleted from the library folder *outside* YellowJacket is discovered
+// as an orphan by the next scan, and its playlist entry must survive as
+// a re-linkable phantom — the same preservation the full rescan and
+// stale-retire paths already perform, scoped here to just the orphaned
+// file.  Before the fix the entry became an empty row (audio_file_id
+// NULL and no phantom_file_path), which nothing can ever re-link.
+func TestScan_OrphanCleanupPreservesPlaylistPhantoms(t *testing.T) {
+	t.Parallel()
+
+	lib, db := setupTestLibrary(t)
+
+	root := t.TempDir()
+	track := filepath.Join(root, "gone.mp3")
+
+	writeTestTrack(t, track, 0)
+
+	library, err := db.Queries.CreateLibrary(lib.ctx, sqlcgen.CreateLibraryParams{
+		Name: "orphans",
+		Path: root,
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+
+	if metrics := lib.scanInternal(library.ID, library.Name, library.Path); metrics == nil {
+		t.Fatal("first scan returned nil metrics")
+	}
+
+	trackID := queryInt(
+		t, db, "SELECT id FROM audio_files WHERE file_path = ?", track,
+	)
+	if trackID == 0 {
+		t.Fatal("first scan did not import the track")
+	}
+
+	if _, err := db.ExecContext(
+		`INSERT INTO playlists (name) VALUES ('keepme')`,
+	); err != nil {
+		t.Fatalf("seed playlist: %v", err)
+	}
+
+	playlistID := queryInt(
+		t, db, "SELECT id FROM playlists WHERE name = 'keepme'",
+	)
+
+	if _, err := db.ExecContext(
+		`INSERT INTO playlist_tracks (playlist_id, audio_file_id, position)
+		 VALUES (?, ?, 0)`,
+		playlistID, trackID,
+	); err != nil {
+		t.Fatalf("seed playlist_tracks: %v", err)
+	}
+
+	// The file goes away outside the app.
+	if err := os.Remove(track); err != nil {
+		t.Fatalf("remove track: %v", err)
+	}
+
+	if metrics := lib.scanInternal(library.ID, library.Name, library.Path); metrics == nil {
+		t.Fatal("second scan returned nil metrics")
+	}
+
+	if n := queryInt(
+		t, db, "SELECT COUNT(*) FROM audio_files WHERE file_path = ?", track,
+	); n != 0 {
+		t.Fatalf("audio_files still holds the removed path: %d rows", n)
+	}
+
+	if n := queryInt(
+		t, db,
+		"SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ? "+
+			"AND audio_file_id IS NULL",
+		playlistID,
+	); n != 1 {
+		t.Fatalf(
+			"playlist entry did not become a phantom: %d null-id rows, want 1",
+			n,
+		)
+	}
+
+	phantomPath := queryString(
+		t, db,
+		"SELECT phantom_file_path FROM playlist_tracks WHERE playlist_id = ?",
+		playlistID,
+	)
+	if phantomPath != track {
+		t.Fatalf(
+			"phantom_file_path = %q, want %q -- the entry cannot be "+
+				"re-linked if the file comes back",
+			phantomPath, track,
+		)
+	}
+}

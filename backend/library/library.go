@@ -911,29 +911,95 @@ func (l *Library) scanInternal(
 
 		orphanStart := time.Now()
 
+		// Snapshot the orphan set first.  The playlist-phantom
+		// preservation and the deletes are one transaction (the
+		// preservation has to land before the ON DELETE SET NULL, and
+		// both have to succeed or neither does), and the ids are what
+		// scope that preservation to just these files instead of
+		// rewriting every playlist row on a routine scan.
+		var (
+			orphans     []sqlcgen.AudioFile
+			orphanPaths []string
+		)
+
 		existingPaths.Range(func(key, value any) bool {
-			path := key.(string)
-			audioFile := value.(sqlcgen.AudioFile)
+			orphanPaths = append(orphanPaths, key.(string))
+			orphans = append(orphans, value.(sqlcgen.AudioFile))
 
-			l.logger.Debug(
-				"removing orphaned database entry",
-				"path", path, "id", audioFile.ID,
-			)
+			return true
+		})
 
-			if err := l.db.Queries.DeleteAudioFile(
-				l.ctx, audioFile.ID,
-			); err != nil {
-				l.logger.Warn(
-					"failed to delete orphaned audio file",
-					"path", path,
-					"id", audioFile.ID,
-					"err", err,
-				)
+		deleted := make([]bool, len(orphans))
 
-				metrics.addWarning(path, "orphan", err)
-
-				return true
+		if len(orphans) > 0 {
+			orphanIDs := make([]int64, len(orphans))
+			for i, f := range orphans {
+				orphanIDs[i] = f.ID
 			}
+
+			tx, beginErr := l.db.BeginTx()
+			if beginErr != nil {
+				metrics.addWarning("", "orphan", beginErr)
+			} else {
+				defer func() { _ = tx.Rollback() }() // no-op after commit
+
+				if err := database.PreservePlaylistPhantomsForFiles(
+					l.ctx, tx, orphanIDs, l.logger,
+				); err != nil {
+					// Deleting without the phantoms is exactly the
+					// playlist-emptying bug the preservation exists to
+					// prevent, so leave the rows for the next scan
+					// rather than empty the playlists now.
+					l.logger.Error(
+						"skipping orphan deletion: could not preserve "+
+							"playlist entries",
+						"err", err,
+					)
+
+					metrics.addWarning("", "orphan", err)
+
+					_ = tx.Rollback()
+				} else {
+					txq := l.db.Queries.WithTx(tx)
+
+					for i, f := range orphans {
+						if err := txq.DeleteAudioFile(
+							l.ctx, f.ID,
+						); err != nil {
+							l.logger.Warn(
+								"failed to delete orphaned audio file",
+								"path", orphanPaths[i],
+								"id", f.ID,
+								"err", err,
+							)
+
+							metrics.addWarning(orphanPaths[i], "orphan", err)
+
+							continue
+						}
+
+						deleted[i] = true
+					}
+
+					if err := tx.Commit(); err != nil {
+						l.logger.Error(
+							"could not commit orphan deletion",
+							"err", err,
+						)
+
+						metrics.addWarning("", "orphan", err)
+					}
+				}
+			}
+		}
+
+		// Post-commit bookkeeping for the files that actually went.
+		for i, f := range orphans {
+			if !deleted[i] {
+				continue
+			}
+
+			path := orphanPaths[i]
 
 			// Keep the file's tagging group in sync: drop the group's
 			// track count and clear it out once empty, mirroring the
@@ -942,25 +1008,25 @@ func (l *Library) scanInternal(
 			// and replaced leaves a stale tagging_items row behind —
 			// its track_count still counts the deleted files, and it
 			// never clears from the autotag queue.
-			if audioFile.GroupKey != "" {
+			if f.GroupKey != "" {
 				if err := l.db.Queries.DecrementTaggingItemTrackCount(
-					l.ctx, audioFile.GroupKey,
+					l.ctx, f.GroupKey,
 				); err != nil {
 					l.logger.Warn(
 						"failed to decrement tagging group for orphan",
 						"path", path,
-						"group_key", audioFile.GroupKey,
+						"group_key", f.GroupKey,
 						"err", err,
 					)
 
 					metrics.addWarning(path, "orphan", err)
 				} else if err := l.db.Queries.DeleteTaggingItemIfEmpty(
-					l.ctx, audioFile.GroupKey,
+					l.ctx, f.GroupKey,
 				); err != nil {
 					l.logger.Warn(
 						"failed to clean up emptied tagging group for orphan",
 						"path", path,
-						"group_key", audioFile.GroupKey,
+						"group_key", f.GroupKey,
 						"err", err,
 					)
 
@@ -969,12 +1035,10 @@ func (l *Library) scanInternal(
 			}
 
 			// Remove from FTS5 search index.
-			if err := l.db.DeleteSearchIndex(
-				audioFile.ID,
-			); err != nil {
+			if err := l.db.DeleteSearchIndex(f.ID); err != nil {
 				l.logger.Warn(
 					"failed to delete FTS entry for orphan",
-					"id", audioFile.ID,
+					"id", f.ID,
 					"err", err,
 				)
 
@@ -982,9 +1046,7 @@ func (l *Library) scanInternal(
 			}
 
 			removed.Add(1)
-
-			return true
-		})
+		}
 
 		metrics.OrphanCleanup = time.Since(orphanStart)
 
