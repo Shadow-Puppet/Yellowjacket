@@ -103,6 +103,22 @@ const collapsed = (page: Page) =>
 
 test.describe('the top bar fits the window', () => {
   /**
+   * **State a spec stages is the spec's to clear** (#168). `/__test/emit`
+   * writes to a store nothing resets, and this file stages the widest job
+   * in the app, so it puts it back — with the same event, since the store
+   * replaces its whole list from every snapshot.
+   *
+   * **Measured: it does not currently outlive the page.** Every test gets
+   * a fresh page and `JobStore.init()` refetches `GetJobs()` from a
+   * backend registry `/__test/emit` never writes to, so nothing is being
+   * repaired here; the rule is stated because it costs one line and the
+   * leak would need only one spec that keeps a page alive.
+   */
+  test.afterEach(async ({ testctl }) => {
+    await testctl.emit('JobsChanged', []);
+  });
+
+  /**
    * The phone's answer, which is not "it fits" (#57).
    *
    * The bar has no grid row below 600px, so measuring its children

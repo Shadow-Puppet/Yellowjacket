@@ -60,6 +60,23 @@ const PHONE = { width: 424, height: 439 };
 const DESKTOP = { width: 1100, height: 800 };
 
 test.describe('background jobs on a phone', () => {
+  /**
+   * **State a spec stages is the spec's to clear.** `/__test/emit` writes
+   * to a store nothing resets, so the event that staged a job is the
+   * event that clears it — `JobStore` replaces its whole list from every
+   * snapshot, so `testctl` needs no special case.
+   *
+   * **Measured on #168: this does not currently outlive the page.** Every
+   * test gets a fresh page, and `JobStore.init()` refetches `GetJobs()`
+   * from a backend registry that `/__test/emit` never writes to, so the
+   * staged job is gone before the next spec starts. Ownership is stated
+   * rather than a live leak repaired — the leak needs a page that
+   * survives its own spec, and there is none today.
+   */
+  test.afterEach(async ({ testctl }) => {
+    await testctl.emit('JobsChanged', []);
+  });
+
   test('are shown in the band, without opening anything', async ({
     app,
     testctl,

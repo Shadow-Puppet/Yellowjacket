@@ -57,6 +57,21 @@ behind `YJ_TESTCTL=1`, which `scripts/dev-headless.sh` sets and
   staging the work that would produce it — job progress, download
   progress, scan progress. It calls `events.Deliver`, which *errors*
   when the event reaches nobody, so a `200` means it really arrived.
+- **State you stage, you own** (#168). Nothing resets those stores, so
+  clear yours in `test.afterEach` with the same event that staged it
+  (`emit('JobsChanged', [])`) — the store replaces its list from every
+  snapshot, so `testctl` needs no special case. **Measured: this does
+  not currently cross a spec boundary**, because every test gets a fresh
+  page and `JobStore.init()` refetches `GetJobs()` from a backend
+  registry that `/__test/emit` never writes to. Stated anyway, because
+  it costs one line and the leak needs only one spec that keeps a page
+  alive — but do not cite #168 for a symptom you have not reproduced.
+- **Measure against the thing next to you, not an absolute
+  coordinate.** An absolute number in a shell measurement is also a
+  claim about everything above it — `contentTop === 0` quietly asserts
+  "and no background job is running", which is not what that spec was
+  about or could arrange, while `contentTop === jobBandBottom` is true
+  either way. This is the half of #168 that stands on its own.
 - **`restore` is slow** (~40 s in the suite) because it copies every
   table. Prefer snapshotting once and restoring only when a spec
   genuinely mutates state.
