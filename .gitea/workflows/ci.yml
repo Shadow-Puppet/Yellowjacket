@@ -107,15 +107,32 @@ jobs:
       # Conventional Commits.  `.releaserc.yml` has always derived the
       # version from the commit type; until now nothing checked that the
       # type was one it recognises, so a malformed subject silently meant
-      # "no release".  BEFORE is the push's previous tip and is absent or
-      # all-zeros for a new branch, in which case only the tip is linted.
+      # "no release".
+      #
+      # **On a `pull_request` there is no `before`.**  Gitea leaves
+      # `github.event.before` empty for one, so this step fell through to
+      # bare `make commit-check`, which lints `git log -1` — the tip
+      # alone.  Every other commit the branch would bring was first
+      # examined by *main's* post-merge run, which is a green PR that
+      # stops being true after the merge, and which happened twice (#254).
+      # The PR's base is the stand-in: the range below already excludes
+      # what the base shares with the branch, because base advances on
+      # main and those commits stay reachable from it.
+      #
+      # Both are handed to the shell rather than chosen in an expression:
+      # `github.event.issue.number` in unclaim.yml is this repo's proof
+      # that payload fields resolve, and the shell then falls back to
+      # today's behaviour for a dispatch run or a missing field instead of
+      # depending on how `&&`/`||` treat an absent context.
       - name: Commit messages
         working-directory: /src
         env:
-          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
         run: |
           set -eu
-          if [ -n "${BEFORE:-}" ] && [ "${BEFORE#0000000}" = "$BEFORE" ] \
+          BEFORE="${PR_BASE:-${PUSH_BEFORE:-}}"
+          if [ -n "$BEFORE" ] && [ "${BEFORE#0000000}" = "$BEFORE" ] \
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             make commit-check RANGE="$BEFORE..$SHA"
           else
