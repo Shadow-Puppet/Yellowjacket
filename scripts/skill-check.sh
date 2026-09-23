@@ -82,23 +82,69 @@ targets="$({ make -pqRr 2>/dev/null || true; } |
 # happened to break there, and a check that fails on reflow gets
 # disabled rather than fixed.
 #
+# **An inline span may be hard-wrapped, and then the mention is split
+# across two lines.**  `make` at the end of one line and its target at
+# the start of the next is one code span to Markdown and two strings to
+# a per-line regex, so the target was invisible — and these docs are
+# mostly hard-wrapped prose, so the wrap is what the author does not
+# think about.  Lines are therefore joined while the span is still open,
+# which is what an odd number of backticks means.
+#
+# Joining re-opens the reflow trap above unless it is bounded, so it is
+# bounded three ways: a fence flushes first (a fenced command is already
+# whole, and joining inside one would break the line-start rule), a
+# blank line flushes (CommonMark does not allow a blank line inside a
+# code span, so nothing legitimate is split by one), and so does a file
+# boundary.  A stray odd backtick in prose therefore costs one paragraph
+# of over-matching rather than the rest of the file.
+#
 # AGENTS.md is deliberately not in this list: it is a symlink to
 # CLAUDE.md, asserted above, so scanning it would report every failure
 # twice under two names.
 mentioned="$(printf '%s\n' "$docs" |
 	xargs awk '
-		FNR == 1 { fence = 0 }
-		/^```/   { fence = !fence; next }
-		{
-			rest = $0
+		function scan(text,    rest) {
+			rest = text
 			while (match(rest, /`make [a-z][a-z0-9-]*/)) {
 				print substr(rest, RSTART + 6, RLENGTH - 6)
 				rest = substr(rest, RSTART + RLENGTH)
 			}
-			if (fence && match($0, /^make [a-z][a-z0-9-]*/)) {
-				print substr($0, 6, RLENGTH - 5)
+		}
+
+		function lineStart(text) {
+			if (match(text, /^make [a-z][a-z0-9-]*/)) {
+				print substr(text, 6, RLENGTH - 5)
 			}
 		}
+
+		function ticks(s,    n, i) {
+			n = 0
+			for (i = 1; i <= length(s); i++) {
+				if (substr(s, i, 1) == "`") n++
+			}
+			return n
+		}
+
+		function flush() {
+			if (buf == "") return
+			scan(buf)
+			if (fence) lineStart(buf)
+			buf = ""
+		}
+
+		FNR == 1 { flush(); fence = 0 }
+
+		/^```/ { flush(); fence = !fence; next }
+
+		/^[[:space:]]*$/ { flush(); next }
+
+		{
+			if (fence) { scan($0); lineStart($0); next }
+			buf = (buf == "" ? $0 : buf " " $0)
+			if (ticks(buf) % 2 == 0) flush()
+		}
+
+		END { flush() }
 	' | sort -u)"
 
 missing=""
@@ -113,7 +159,16 @@ if [ -n "$missing" ]; then
 	echo "skill-check: the docs name make targets that do not exist:" >&2
 	for t in $missing; do
 		echo "  make $t" >&2
-		printf '%s\n' "$docs" | xargs grep -ln "make $t" | sed 's/^/      /' >&2
+		# `make <t>` on one line first, because that is where a target is
+		# normally named and it is the precise answer.  The bare name is the
+		# fallback, and it exists because the parser above can now find a
+		# mention that *this* grep cannot: a wrapped span has `make` and its
+		# target on different lines.  Without it a missing target reported no
+		# file at all, and `set -o pipefail` turned the empty grep into exit
+		# 123, before the line telling the author what to do.
+		hits="$(printf '%s\n' "$docs" | xargs grep -ln "make $t" 2>/dev/null || true)"
+		[ -n "$hits" ] || hits="$(printf '%s\n' "$docs" | xargs grep -ln -- "$t" 2>/dev/null || true)"
+		[ -n "$hits" ] && printf '%s\n' "$hits" | sed 's/^/      /' >&2
 	done
 	echo "Fix the docs, or restore the target." >&2
 	exit 1
