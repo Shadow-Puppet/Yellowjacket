@@ -171,8 +171,8 @@ test.describe('search on a phone', () => {
     // Attached, not visible: `wa-dialog`'s host is `display: contents`,
     // so the element carrying the testid always reports hidden — what
     // is visible is the native `<dialog>` inside it. That awkwardness
-    // is written down in CLAUDE.md and is why the assertion that this
-    // is really up is the role query below.
+    // is why the assertion that this is really up is the role query
+    // below.
     await expect(dialog).toBeAttached();
 
     // Named, which `getByRole` can answer and the a11y snapshot cannot

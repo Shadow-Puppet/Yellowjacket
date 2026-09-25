@@ -64,8 +64,7 @@ var frontendDistAssets embed.FS
 // Returning early is not a degraded mode: `nativeInit` has already
 // re-attached the bridge, so the recreated activity's WebView talks to
 // the app that is still running, with its queue and its playback
-// position intact. See CLAUDE.md, "An activity is a view onto the
-// process".
+// position intact.
 //
 // It is inert off Android, where a process has exactly one main().
 var mainStarted atomic.Bool

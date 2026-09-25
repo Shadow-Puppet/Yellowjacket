@@ -5078,3 +5078,22 @@ last rendered card.
 ("ask the virtualizer for a larger overscan") is therefore not
 available without patching a private, which is why the request is
 issued ahead of the element instead.
+
+## Declined, and recorded nowhere else (2026-09-25, #256)
+
+When CLAUDE.md was cut down to rules, most of its "considered and
+declined" paragraphs already had a home in a code or config comment
+beside what they explain. These three did not:
+
+- **`touch-action: manipulation` was declined** (#54). The 300ms tap
+  delay it is offered for is already absent on a `width=device-width`
+  viewport; what it would actually change is the gesture stack #63 tuned
+  by measurement on the reference device.
+- **There is no "Go to Genre"** in the phone row menu (#67). That menu
+  replaces name links a phone cannot use, and there has never been a
+  genre link to replace — it would be new navigation, which wants its
+  own issue.
+- **The overlaid queue has no tap-outside gutter on a phone** (#171).
+  The drawer-style gutter would buy the affordance by taking width off a
+  full-screen surface on a 424px viewport; back and a 44px close button
+  answer it instead.
