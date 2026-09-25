@@ -68,7 +68,7 @@ jobs:
       # claim with a test behind it now (cmd/indexbuild/deps_test.go),
       # because the v3 migration quietly broke it and this job was where
       # that surfaced.
-      image: golang:1.25
+      image: golang:1.26
       # This host path must exist on the runner and be listed verbatim in
       # act_runner's container.valid_volumes. It holds explore-staging/
       # (counts.bin + state.json) and yj.db — the checkpoint that makes
@@ -147,6 +147,49 @@ jobs:
           zstd -19 -T0 -q -f /tmp/core-index.db -o /tmp/core-index.db.zst
           sha256sum /tmp/core-index.db.zst | tee /tmp/core-index.db.zst.sha256
           ls -lh /tmp/core-index.db.zst
+
+      # Nothing is published until it has been imported by the code that
+      # imports it on a user's machine. The exporter and the importer are
+      # two descriptions of one storage format, and every other tier tests
+      # the importer against a *fixture* rather than against the file being
+      # shipped — a second description free to be wrong in the same
+      # direction as the code reading it.
+      #
+      # That is how #258 reached everyone: the importer positioned its batch
+      # walk with a Go `string` cursor against this file's 16-byte `mbid`
+      # column, and SQLite neither coerces between TEXT and BLOB nor
+      # complains about the comparison — so the walk merged no rows and
+      # never advanced, and no install could finish its first index build.
+      # The fixture guarding that walk writes the old text encoding, and the
+      # only compact fixture is one row, below the batch size, so the bound
+      # query never ran. Both were green throughout.
+      #
+      # Running it here is also what keeps the failure cheap: the previous
+      # artifact stays published while this runs, so a failure costs one
+      # stale catalog rather than an empty one for every install.
+      #
+      # `-tags indexbuild` because this container has no GTK and the default
+      # tag set links the app through Wails. The `--- PASS` grep is not
+      # decoration — the test skips without the path, and a skip is
+      # indistinguishable from a pass in a summary line.
+      - name: Import the exported artifact as a client does
+        if: steps.maintain.outputs.complete == 'true' && steps.maintain.outputs.changed == 'true'
+        working-directory: /src
+        env:
+          YJ_CORE_INDEX_ARTIFACT: /tmp/core-index.db.zst
+        run: |
+          set -eu
+          log=/tmp/import-check.log
+          if ! go test -tags indexbuild -count=1 -timeout 30m -v \
+            -run TestImportPublishedArtifact ./backend/explore/ > "$log" 2>&1;
+          then
+            tail -60 "$log"
+            echo "::error::The artifact does not import; not publishing it."
+            exit 1
+          fi
+          cat "$log"
+          grep -qF -- 'PASS: TestImportPublishedArtifact' "$log"
+          echo "::notice::The artifact imports as a client would merge it."
 
       - name: Publish to the Gitea package registry
         if: steps.maintain.outputs.complete == 'true' && steps.maintain.outputs.changed == 'true'
