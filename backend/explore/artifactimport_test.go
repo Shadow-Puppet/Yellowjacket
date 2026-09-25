@@ -852,6 +852,41 @@ func TestImportCoreArtifactWithoutCredits(t *testing.T) {
 	}
 }
 
+// TestImportCoreArtifactRefusesAMergeThatLosesRows is the count guard's
+// positive case.
+//
+// The walk's predicates partition the artifact's key space, so a merge
+// that lands fewer rows than the artifact declares means a predicate
+// dropped some — and the failure is a catalog that looks populated and
+// is missing things nobody can name.  An empty mbid is the reachable
+// way to get there: `mbid > ?` is false of it in both encodings, so it
+// is never selected, and nothing else in the import would notice.
+func TestImportCoreArtifactRefusesAMergeThatLosesRows(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+
+	path := writeCompactTestArtifact(t, validMeta(), []artifactRow{
+		{EntityArtist, artA, "Artist A", "Artist A", artA, 5000},
+		{EntityArtist, "", "Nameless", "Artist A", artA, 4000},
+	})
+
+	err := si.importCoreArtifact(context.Background(), path)
+	if err == nil {
+		t.Fatal("a merge that lost a row was reported as a complete import")
+	}
+
+	if !strings.Contains(err.Error(), "merged 1 of 2 rows") {
+		t.Errorf("error = %v, want it to name the shortfall", err)
+	}
+
+	// And the same rule as every other rejection: a failed merge must not
+	// leave the index claiming it has a catalog, or the real build would
+	// never run again.
+	if si.hasMeta(dumpImportDoneKey) {
+		t.Error("a failed import still stamped dump_import_done")
+	}
+}
+
 // TestArtifactKeyBindsInTheArtifactsOwnEncoding pins the one place the
 // batch walk's comparison type is decided.
 //

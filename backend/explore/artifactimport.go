@@ -285,6 +285,25 @@ func (si *SearchIndex) importCoreArtifact(ctx context.Context, path string) erro
 	}
 
 	merged, mergeErr := si.mergeArtifactRows(ctx, info.rows)
+
+	// Every row the artifact declares has to land.  The walk partitions
+	// the artifact's key space, so a total short of info.rows does not
+	// mean the artifact was smaller than it said -- it means a predicate
+	// filtered rows out, and the catalog is quietly partial.  Equality
+	// rather than a lower bound because RowsAffected counts an upsert
+	// that changes nothing, and a row already merged locally is counted
+	// again here.
+	//
+	// One reachable case, so this is not merely a tripwire: a row whose
+	// mbid is empty is excluded by `mbid > ?` in both encodings, and an
+	// artifact carrying one would otherwise import as complete.
+	if mergeErr == nil && merged != info.rows {
+		mergeErr = fmt.Errorf(
+			"%w: merged %d of %d rows — a row the artifact holds was not selected",
+			ErrArtifactUnusable, merged, info.rows,
+		)
+	}
+
 	if mergeErr == nil {
 		si.mergeArtifactCredits(ctx)
 	}
