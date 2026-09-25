@@ -1,6 +1,7 @@
 package explore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/hex"
@@ -71,13 +72,7 @@ func writeTestArtifact(
 		}
 	}
 
-	for k, v := range meta {
-		if _, err := db.Exec(
-			`INSERT INTO artifact_meta (key, value) VALUES (?, ?)`, k, v,
-		); err != nil {
-			t.Fatalf("stamp artifact meta: %v", err)
-		}
-	}
+	stampArtifactMeta(t, db, meta)
 
 	for _, r := range rows {
 		if _, err := db.Exec(`
@@ -91,6 +86,101 @@ func writeTestArtifact(
 	}
 
 	return path
+}
+
+// compactArtifactSchema is the artifact cmd/indexexport publishes: the
+// catalog's ids as 16 raw bytes, its entity types as codes, and the
+// per-release-group total_tracks the exporter added after the first
+// artifact was shipped.
+//
+// It matters that a fixture carries this encoding and not the older
+// text one, because SQLite does not coerce between TEXT and BLOB and
+// every comparison the importer makes against an mbid is therefore
+// encoding-sensitive.  writeTestArtifact above is the *other* fixture:
+// it still writes the text form, which is what the first published
+// artifact carries and what the importer must keep reading.
+var compactArtifactSchema = []string{
+	`CREATE TABLE explore_index (
+		entity_type      INTEGER NOT NULL,
+		mbid             BLOB NOT NULL,
+		title            TEXT NOT NULL,
+		artist_name      TEXT NOT NULL,
+		artist_mbid      BLOB NOT NULL,
+		aliases          TEXT NOT NULL DEFAULT '',
+		popularity       INTEGER NOT NULL DEFAULT 0,
+		listener_count   INTEGER NOT NULL DEFAULT 0,
+		duration         INTEGER NOT NULL DEFAULT 0,
+		caa_release_mbid BLOB NOT NULL DEFAULT x'',
+		release_name     TEXT NOT NULL DEFAULT '',
+		primary_type     TEXT NOT NULL DEFAULT '',
+		secondary_types  TEXT NOT NULL DEFAULT '',
+		release_date     TEXT NOT NULL DEFAULT '',
+		total_tracks     INTEGER NOT NULL DEFAULT 0,
+		artist_type      TEXT NOT NULL DEFAULT '',
+		country          TEXT NOT NULL DEFAULT '',
+		disambiguation   TEXT NOT NULL DEFAULT '',
+		sort_name        TEXT NOT NULL DEFAULT '',
+		discog_fetched   INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (mbid)
+	) WITHOUT ROWID`,
+	`CREATE TABLE artifact_meta (
+		key   TEXT PRIMARY KEY,
+		value TEXT NOT NULL
+	)`,
+}
+
+// writeCompactTestArtifact builds the artifact the exporter publishes
+// today, in its own encoding, so the importer is exercised against what
+// a client actually downloads rather than against what it was written
+// for.
+func writeCompactTestArtifact(
+	t *testing.T, meta map[string]string, rows []artifactRow,
+) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "core-index.db")
+
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open artifact: %v", err)
+	}
+
+	defer func() { _ = db.Close() }()
+
+	for _, stmt := range compactArtifactSchema {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create artifact schema: %v", err)
+		}
+	}
+
+	stampArtifactMeta(t, db, meta)
+
+	for _, r := range rows {
+		if _, err := db.Exec(`
+			INSERT INTO explore_index
+				(entity_type, mbid, title, artist_name, artist_mbid, popularity)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			entityCode(r.entityType), mbidBytes(r.mbid), r.title,
+			r.artistName, mbidBytes(r.artistMBID), r.popularity,
+		); err != nil {
+			t.Fatalf("insert artifact row: %v", err)
+		}
+	}
+
+	return path
+}
+
+// stampArtifactMeta writes the artifact_meta rows a fixture declares.
+func stampArtifactMeta(t *testing.T, db *sql.DB, meta map[string]string) {
+	t.Helper()
+
+	for k, v := range meta {
+		if _, err := db.Exec(
+			`INSERT INTO artifact_meta (key, value) VALUES (?, ?)`, k, v,
+		); err != nil {
+			t.Fatalf("stamp artifact meta: %v", err)
+		}
+	}
 }
 
 // validMeta is the artifact_meta a well-formed artifact carries.
@@ -267,6 +357,71 @@ func TestImportCoreArtifactBatchWalkCoversAllRows(t *testing.T) {
 
 	if got != total {
 		t.Errorf("merged %d rows, want %d", got, total)
+	}
+}
+
+// TestImportCoreArtifactBatchWalkCoversAllRowsCompact is the batch walk
+// on the encoding the exporter actually publishes.
+//
+// The walk positions itself by comparing the artifact's own mbid column
+// against the last id it reached, and that column holds 16 raw bytes.
+// SQLite does not coerce between TEXT and BLOB, and a blob sorts after
+// every text value, so a cursor bound as text is a predicate that either
+// matches every row or none: `mbid > ?` with an empty text key is true
+// of the whole table, so
+// the 100th row is always the 100th row and the bound never advances,
+// while `mbid <= <text>` is false of the whole table, so no batch ever
+// merges.  The result is not a wrong import but an unbounded loop that
+// merges nothing and never fails.
+//
+// Both encodings are covered on purpose.  The walk was only ever tested
+// against the text fixture above, which is why it shipped broken on the
+// one the clients download.
+func TestImportCoreArtifactBatchWalkCoversAllRowsCompact(t *testing.T) {
+	db := database.NewTestDB(t)
+	si := NewSearchIndex(db, nil, nil, testLogger())
+
+	original := artifactMergeBatch
+	artifactMergeBatch = 100
+
+	t.Cleanup(func() { artifactMergeBatch = original })
+
+	const total = 337
+
+	rows := make([]artifactRow, 0, total)
+	for i := range total {
+		rows = append(rows, artifactRow{
+			entityType: EntityRecording,
+			mbid:       syntheticMBID(i),
+			title:      "Song",
+			artistName: "Artist",
+			artistMBID: artA,
+			popularity: i,
+		})
+	}
+
+	path := writeCompactTestArtifact(t, validMeta(), rows)
+
+	if err := si.importCoreArtifact(context.Background(), path); err != nil {
+		t.Fatalf("importCoreArtifact: %v", err)
+	}
+
+	var got, top int
+
+	if err := db.QueryRowWriter(
+		"SELECT COUNT(*), MAX(popularity) FROM explore_index",
+	).Scan(&got, &top); err != nil {
+		t.Fatalf("count rows: %v", err)
+	}
+
+	if got != total {
+		t.Errorf("merged %d rows, want %d", got, total)
+	}
+
+	// A count alone would pass if the walk re-merged the same first
+	// batch forever, so the far end of the artifact is checked too.
+	if top != total-1 {
+		t.Errorf("highest popularity = %d, want %d", top, total-1)
 	}
 }
 
@@ -454,61 +609,9 @@ func TestArtifactColumnsMatchExporter(t *testing.T) {
 // the importer decides by asking the artifact, not by trusting a
 // version number, and both must land identically.
 func TestImportCoreArtifactAcceptsBothEncodings(t *testing.T) {
-	compact := filepath.Join(t.TempDir(), "core-index.db")
-
-	db, err := sql.Open("sqlite", "file:"+compact)
-	if err != nil {
-		t.Fatalf("open artifact: %v", err)
-	}
-
-	if _, err := db.Exec(`CREATE TABLE explore_index (
-		entity_type      INTEGER NOT NULL,
-		mbid             BLOB NOT NULL,
-		title            TEXT NOT NULL,
-		artist_name      TEXT NOT NULL,
-		artist_mbid      BLOB NOT NULL,
-		aliases          TEXT NOT NULL DEFAULT '',
-		popularity       INTEGER NOT NULL DEFAULT 0,
-		listener_count   INTEGER NOT NULL DEFAULT 0,
-		duration         INTEGER NOT NULL DEFAULT 0,
-		caa_release_mbid BLOB NOT NULL DEFAULT x'',
-		release_name     TEXT NOT NULL DEFAULT '',
-		primary_type     TEXT NOT NULL DEFAULT '',
-		secondary_types  TEXT NOT NULL DEFAULT '',
-		release_date     TEXT NOT NULL DEFAULT '',
-		artist_type      TEXT NOT NULL DEFAULT '',
-		country          TEXT NOT NULL DEFAULT '',
-		disambiguation   TEXT NOT NULL DEFAULT '',
-		sort_name        TEXT NOT NULL DEFAULT '',
-		discog_fetched   INTEGER NOT NULL DEFAULT 0,
-		PRIMARY KEY (mbid)
-	)`); err != nil {
-		t.Fatalf("create artifact table: %v", err)
-	}
-
-	if _, err := db.Exec(
-		`CREATE TABLE artifact_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
-	); err != nil {
-		t.Fatalf("create artifact meta: %v", err)
-	}
-
-	for k, v := range validMeta() {
-		if _, err := db.Exec(
-			"INSERT INTO artifact_meta (key, value) VALUES (?, ?)", k, v,
-		); err != nil {
-			t.Fatalf("write artifact meta: %v", err)
-		}
-	}
-
-	if _, err := db.Exec(`
-		INSERT INTO explore_index (entity_type, mbid, title, artist_name, artist_mbid, popularity)
-		VALUES (1, ?, 'Artist A', 'Artist A', ?, 5000)`,
-		mbidBytes(artA), mbidBytes(artA),
-	); err != nil {
-		t.Fatalf("write artifact row: %v", err)
-	}
-
-	_ = db.Close()
+	compact := writeCompactTestArtifact(t, validMeta(), []artifactRow{
+		{EntityArtist, artA, "Artist A", "Artist A", artA, 5000},
+	})
 
 	live := database.NewTestDB(t)
 	si := NewSearchIndex(live, nil, nil, testLogger())
@@ -746,5 +849,55 @@ func TestImportCoreArtifactWithoutCredits(t *testing.T) {
 
 	if refs != 0 {
 		t.Errorf("credit refs = %d, want 0", refs)
+	}
+}
+
+// TestArtifactKeyBindsInTheArtifactsOwnEncoding pins the one place the
+// batch walk's comparison type is decided.
+//
+// Every wrong answer is silent, which is why it is worth pinning all
+// four.  SQLite does not coerce TEXT to BLOB and orders every blob after
+// every text value, so a text key against a byte column makes
+// `mbid > ?` true of the whole artifact - the cursor never advances and
+// the walk spins forever without merging a row - while a byte key
+// against a text column makes it false of the whole artifact, so every
+// batch merges nothing and the import "succeeds" empty.  An unset cursor
+// is the same fault once more: database/sql converts a nil []byte to
+// SQL NULL, and `mbid > NULL` matches no row at all.
+func TestArtifactKeyBindsInTheArtifactsOwnEncoding(t *testing.T) {
+	raw := mbidBytes(artA)
+
+	for _, tt := range []struct {
+		name string
+		key  artifactKey
+		want []byte
+	}{
+		{"unset", nil, []byte{}},
+		{"set", artifactKey(raw), raw},
+	} {
+		t.Run("bytes/"+tt.name, func(t *testing.T) {
+			got, ok := tt.key.bind(false).([]byte)
+			if !ok {
+				t.Fatalf("bind(false) = %T, want []byte", tt.key.bind(false))
+			}
+
+			if got == nil {
+				t.Fatal("bound to SQL NULL, which matches no row")
+			}
+
+			if !bytes.Equal(got, tt.want) {
+				t.Errorf("bind(false) = %x, want %x", got, tt.want)
+			}
+		})
+	}
+
+	// The dashed form is what an artifact published before the storage
+	// change carries, and it has to compare as text against text.
+	if got := artifactKey(nil).bind(true); got != "" {
+		t.Errorf("bind(true) on an unset cursor = %#v, want an empty string", got)
+	}
+
+	if got := artifactKey(artA).bind(true); got != artA {
+		t.Errorf("bind(true) = %#v, want %q", got, artA)
 	}
 }

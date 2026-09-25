@@ -1,8 +1,10 @@
 package explore
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -348,8 +350,12 @@ func (si *SearchIndex) analyzeIndex() {
 // is an index range scan and a cancelled import leaves committed work
 // behind rather than rolling it all back.
 func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, error) {
+	// Asked once, because it is a property of the file and it decides
+	// how the walk's own comparisons are typed.  See artifactKey.
+	storesText := si.artifactStoresText()
+
 	selectColumns := artifactSelectColumns(
-		si.artifactStoresText(), si.artifactHasTotals(),
+		storesText, si.artifactHasTotals(),
 	)
 
 	insertSQL := `
@@ -367,7 +373,7 @@ func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, e
 		WHERE mbid > ? AND mbid <= ?` + upsertIndexConflictSQL
 
 	var (
-		cursor string
+		cursor artifactKey
 		merged int
 	)
 
@@ -376,17 +382,30 @@ func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, e
 			return merged, err
 		}
 
-		upper, hasUpper, err := si.artifactBatchBound(cursor)
+		upper, hasUpper, err := si.artifactBatchBound(storesText, cursor)
 		if err != nil {
 			return merged, err
+		}
+
+		if hasUpper && bytes.Compare(upper, cursor) <= 0 {
+			// The predicate matched the cursor itself, so the walk can
+			// never advance.  SQLite says nothing when a comparison is
+			// made between types it will not coerce - the query simply
+			// answers wrongly - so a mismatch here would otherwise spin
+			// forever behind an unmoving progress bar.  Fail instead.
+			return merged, fmt.Errorf(
+				"%w: artifact walk did not advance past %x",
+				ErrArtifactUnusable, []byte(cursor),
+			)
 		}
 
 		var res sql.Result
 
 		if hasUpper {
-			res, err = si.db.ExecContext(insertRangeSQL, cursor, upper)
+			res, err = si.db.ExecContext(insertRangeSQL,
+				cursor.bind(storesText), upper.bind(storesText))
 		} else {
-			res, err = si.db.ExecContext(insertSQL, cursor)
+			res, err = si.db.ExecContext(insertSQL, cursor.bind(storesText))
 		}
 
 		if err != nil {
@@ -413,26 +432,65 @@ func (si *SearchIndex) mergeArtifactRows(ctx context.Context, total int) (int, e
 	}
 }
 
+// artifactKey is one MBID as the attached artifact stores it: 16 raw
+// bytes in a compact artifact, the dashed 36-character form in one
+// published before that storage change.
+//
+// It is a type with a bind method rather than a string because the
+// comparison it feeds is typed, and the wrong type is silent.  SQLite
+// does not coerce between TEXT and BLOB and orders every blob after
+// every text value, so a cursor bound as text against a byte column
+// makes `mbid > ?` true of the whole table - the walk rediscovers the
+// same batch bound forever, and `mbid <= ?` false of the whole table,
+// so no batch merges at all.  Nothing errors; the import simply never
+// finishes.  bind is the one place that knows which form the column is
+// in, decided by artifactStoresText, which asks the artifact rather than
+// trusting a version number.
+type artifactKey []byte
+
+// bind renders the key as a statement argument in the artifact's own
+// encoding.
+func (k artifactKey) bind(storesText bool) driver.Value {
+	if storesText {
+		return string(k)
+	}
+
+	// Never nil.  database/sql converts a nil []byte to SQL NULL, and
+	// `mbid > NULL` is NULL for every row - so an unset cursor would
+	// agree with nothing and import nothing, which is the same silently
+	// empty merge this type exists to prevent, one type over.
+	if k == nil {
+		return []byte{}
+	}
+
+	return []byte(k)
+}
+
 // artifactBatchBound returns the MBID that ends the next batch, and
 // whether one exists — no bound means the remainder is the last batch.
-func (si *SearchIndex) artifactBatchBound(cursor string) (string, bool, error) {
-	var bound string
+//
+// The bound is read out of the artifact and handed back as an
+// artifactKey, because it becomes the next comparison the walk makes.
+func (si *SearchIndex) artifactBatchBound(
+	storesText bool, cursor artifactKey,
+) (artifactKey, bool, error) {
+	var bound []byte
 
 	err := si.db.QueryRowWriter(
 		`SELECT mbid FROM core.explore_index
 		 WHERE mbid > ? ORDER BY mbid LIMIT 1 OFFSET ?`,
-		cursor, artifactMergeBatch-1,
+		cursor.bind(storesText), artifactMergeBatch-1,
 	).Scan(&bound)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return nil, false, nil
 	}
 
 	if err != nil {
-		return "", false, fmt.Errorf("%w: batch bound: %w", ErrArtifactUnusable, err)
+		return nil, false, fmt.Errorf("%w: batch bound: %w", ErrArtifactUnusable, err)
 	}
 
-	return bound, true, nil
+	return artifactKey(bound), true, nil
 }
 
 // stampArtifactMeta records what the merge established: the catalog half

@@ -845,6 +845,22 @@ that is quietly empty.
   top-N, exact match, FTS search, popularity batch, the CAA map — and
   asserts each returns something with a dashed id. A missed conversion
   site shows up there and essentially nowhere else.
+- **A comparison is typed on *both* sides, and a parameter is the half
+  that gets forgotten.** The paragraph above is about a literal; the
+  artifact merge positioned its batch walk with a Go `string` cursor
+  against the artifact's byte column, and SQLite answered rather than
+  complained: `mbid > ?` with a text key is true of every row, so the
+  bound the walk looked up was the same every time and the cursor
+  never advanced, while `mbid <= ?` is false of every row, so no batch
+  merged at all. The import looped indefinitely at 100% CPU behind a
+  progress bar reading "0 of 1,077,893 rows", merged nothing and
+  raised nothing (#258). Nothing caught it because the fixture that
+  guards the walk writes the old text form and the only compact one is
+  a single row — below `artifactMergeBatch`, so the bound query never
+  ran. `artifactKey` types the cursor to the artifact's own encoding
+  now, and the walk fails loudly when its bound does not strictly
+  advance, because the failure mode here is silence rather than a
+  wrong answer.
 
 **The artifact is read in either encoding.** A published artifact
 carries whichever form the exporter that built it used, and there is one
