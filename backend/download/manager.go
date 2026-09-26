@@ -577,12 +577,12 @@ func (m *Manager) Start(
 		))
 	}
 
-	if m.AutoPickable(dl, ranked) {
+	if pick, ok := autoPick(dl, ranked, m.preferences()); ok {
 		if job != nil {
 			job.Logf(jobs.LevelInfo, "Auto-selected best candidate")
 		}
 
-		go m.grab(context.WithoutCancel(ctx), dl, ranked[0], job)
+		go m.grab(context.WithoutCancel(ctx), dl, pick, job, true)
 
 		return ranked, nil
 	}
@@ -622,6 +622,13 @@ func (m *Manager) Attempt(
 		return false, veto, nil
 	}
 
+	pick, ok := autoPick(dl, ranked, m.preferences())
+	if !ok {
+		// Unreachable while autoPick and AutoPickVeto agree; kept so a
+		// future divergence refuses rather than grabbing blind.
+		return false, "no candidate clears the auto-download bar", nil
+	}
+
 	if err := m.store.CreateDownload(ctx, dl); err != nil {
 		return false, "", err
 	}
@@ -643,7 +650,7 @@ func (m *Manager) Attempt(
 		))
 	}
 
-	go m.grab(context.WithoutCancel(ctx), dl, ranked[0], job)
+	go m.grab(context.WithoutCancel(ctx), dl, pick, job, true)
 
 	return true, "", nil
 }
@@ -678,7 +685,7 @@ func (m *Manager) Pick(
 
 	job := m.startJob(dl)
 
-	go m.grab(context.WithoutCancel(ctx), dl, *chosen, job)
+	go m.grab(context.WithoutCancel(ctx), dl, *chosen, job, false)
 
 	return nil
 }
@@ -702,13 +709,20 @@ func (m *Manager) Cancel(ctx context.Context, downloadID string) error {
 	return nil
 }
 
-// grab drives one candidate all the way to the library.  It runs on its
+// grab drives one request all the way to the library.  It runs on its
 // own goroutine and owns the job from here on.
+//
+// When fallback is set and a candidate's transfer fails, the next
+// candidate that auto-pick would itself have accepted is tried in its
+// place (see nextCandidate).  It is set for the two unattended routes
+// and not for a candidate the user picked by hand: they chose that copy,
+// and quietly substituting another is a decision they did not make.
 func (m *Manager) grab(
 	ctx context.Context,
 	dl Download,
 	c Candidate,
 	job *jobs.Handle,
+	fallback bool,
 ) {
 	ctx, cancel := context.WithTimeout(ctx, grabTimeout)
 	defer cancel()
@@ -723,6 +737,82 @@ func (m *Manager) grab(
 		m.actMu.Unlock()
 	}()
 
+	var failed []Candidate
+
+	for {
+		out := m.attemptGrab(ctx, dl, c, job)
+		if out.err == nil {
+			m.finishGrab(ctx, dl, out.item, out.imported, job)
+
+			return
+		}
+
+		failed = append(failed, c)
+
+		next, ok := m.nextCandidate(ctx, dl, failed, out, fallback)
+		if !ok {
+			m.failDownload(ctx, job, dl.ID, out.err)
+
+			return
+		}
+
+		m.logger.Info(
+			"download candidate failed; trying the next",
+			"download", dl.ID,
+			"failed", c.ID,
+			"next", next.ID,
+			"error", out.err,
+		)
+
+		if job != nil {
+			job.Logf(jobs.LevelWarn, fmt.Sprintf(
+				"%s failed (%v); trying %s instead",
+				describeCandidate(c), out.err, describeCandidate(next),
+			))
+		}
+
+		// The failed attempt's staging holds at most a partial folder
+		// nobody is going to import, and the next attempt reserves its
+		// own.  Only the final failure keeps its staging for inspection.
+		if out.item.StagingDir != "" {
+			if err := m.staging.Release(out.item.StagingDir); err != nil {
+				m.logger.Warn("could not release staging dir", "error", err)
+			}
+		}
+
+		c = next
+	}
+}
+
+// maxGrabAttempts bounds how many candidates one request will try.  A
+// popular album can have dozens of peers; the point of falling back is
+// to survive the ordinary one or two that are offline, not to walk the
+// whole list for six hours.
+const maxGrabAttempts = 3
+
+// grabOutcome is how one candidate's attempt ended.
+type grabOutcome struct {
+	item     DownloadItem
+	imported ImportResult
+	err      error
+
+	// retryable reports whether another candidate might succeed where
+	// this one failed: the transfer failed, or delivered too little of
+	// the album.  Anything else — no staging space, no library root, a
+	// tag write failing — would fail the next candidate identically.
+	retryable bool
+}
+
+// attemptGrab takes one candidate through transfer and import.  It
+// records the item's own failure, but not the download's: whether the
+// download has failed is the caller's decision, since another candidate
+// may yet succeed.
+func (m *Manager) attemptGrab(
+	ctx context.Context,
+	dl Download,
+	c Candidate,
+	job *jobs.Handle,
+) grabOutcome {
 	// Who will move the bytes is decided before any slot is taken, so
 	// the transfer waits in its own provider's queue rather than in a
 	// global one.  A delegate takes no slot at all: the transfer is
@@ -731,9 +821,7 @@ func (m *Manager) grab(
 	// work against our budget.
 	plan, err := m.planTransfer(dl, c)
 	if err != nil {
-		m.failDownload(ctx, job, dl.ID, err)
-
-		return
+		return grabOutcome{err: err}
 	}
 
 	if !plan.delegated() {
@@ -743,9 +831,7 @@ func (m *Manager) grab(
 		case provSem <- struct{}{}:
 			defer func() { <-provSem }()
 		case <-ctx.Done():
-			m.failDownload(ctx, job, dl.ID, ctx.Err())
-
-			return
+			return grabOutcome{err: ctx.Err()}
 		}
 
 		globalSem := m.globalSem()
@@ -754,9 +840,7 @@ func (m *Manager) grab(
 		case globalSem <- struct{}{}:
 			defer func() { <-globalSem }()
 		case <-ctx.Done():
-			m.failDownload(ctx, job, dl.ID, ctx.Err())
-
-			return
+			return grabOutcome{err: ctx.Err()}
 		}
 	}
 
@@ -771,24 +855,30 @@ func (m *Manager) grab(
 
 	dir, err := m.staging.Reserve(item.ID)
 	if err != nil {
-		m.failDownload(ctx, job, dl.ID, err)
-
-		return
+		return grabOutcome{err: err}
 	}
 
 	item.StagingDir = dir
 
 	if err := m.store.CreateItem(ctx, item); err != nil {
-		m.failDownload(ctx, job, dl.ID, err)
+		return grabOutcome{item: item, err: err}
+	}
 
-		return
+	fail := func(err error, retryable bool) grabOutcome {
+		if serr := m.store.SetItemState(
+			ctx, item.ID, StateFailed, err.Error(),
+		); serr != nil {
+			m.logger.Warn("could not record item failure", "error", serr)
+		}
+
+		return grabOutcome{item: item, err: err, retryable: retryable}
 	}
 
 	result, err := m.transfer(ctx, dl, item, plan, job)
 	if err != nil {
-		m.failItem(ctx, job, item, dl.ID, err)
-
-		return
+		// A delegate's failure is the external manager's verdict on the
+		// whole request, not on one copy of it.
+		return fail(err, !plan.delegated())
 	}
 
 	m.setStates(ctx, dl.ID, item.ID, StateImporting)
@@ -798,42 +888,116 @@ func (m *Manager) grab(
 		job.SetStages(importStages(2))
 	}
 
-	var imported ImportResult
-
 	if result.Delegated {
 		// The external manager already placed and tagged these files in
 		// its own library.  Moving them out from under a system that is
 		// still managing them would be worse than useless, so the files
 		// are recorded where they are and the library scan picks them
 		// up in place.
-		imported = ImportResult{Paths: result.Files}
-
 		if job != nil {
 			job.Logf(jobs.LevelInfo, fmt.Sprintf(
 				"External manager imported %d files; recording them in place",
 				len(result.Files),
 			))
 		}
-	} else {
-		opts := m.importOptions()
-		opts.WriteTags = true
 
-		opts.LibraryRoot, err = m.library.LibraryPath(dl.LibraryID)
-		if err != nil {
-			m.failItem(ctx, job, item, dl.ID,
-				fmt.Errorf("resolve library root: %w", err))
-
-			return
-		}
-
-		imported, err = m.importer.Import(ctx, dl, result, opts)
-		if err != nil {
-			m.failItem(ctx, job, item, dl.ID, err)
-
-			return
+		return grabOutcome{
+			item:     item,
+			imported: ImportResult{Paths: result.Files},
 		}
 	}
 
+	opts := m.importOptions()
+	opts.WriteTags = true
+
+	opts.LibraryRoot, err = m.library.LibraryPath(dl.LibraryID)
+	if err != nil {
+		return fail(fmt.Errorf("resolve library root: %w", err), false)
+	}
+
+	imported, err := m.importer.Import(ctx, dl, result, opts)
+	if err != nil {
+		return fail(err, errors.Is(err, ErrTooIncomplete))
+	}
+
+	return grabOutcome{item: item, imported: imported}
+}
+
+// nextCandidate picks the candidate to try after the ones in failed.
+//
+// It only ever offers a candidate auto-pick would have taken on its own
+// (autoAcceptable), so falling back cannot lower the bar an unattended
+// download is held to: the second choice has to clear the same gates
+// the first did.
+//
+// On Soulseek a failure belongs to the *peer* — offline, refusing, or
+// holding us in a queue — so every folder that peer offered is skipped
+// with it.  Elsewhere a failure belongs to the release, and only that
+// candidate is.
+func (m *Manager) nextCandidate(
+	ctx context.Context,
+	dl Download,
+	failed []Candidate,
+	out grabOutcome,
+	fallback bool,
+) (Candidate, bool) {
+	if !fallback || !out.retryable || ctx.Err() != nil ||
+		len(failed) >= maxGrabAttempts {
+		return Candidate{}, false
+	}
+
+	m.resMu.RLock()
+	ranked := m.results[dl.ID]
+	m.resMu.RUnlock()
+
+	prefs := m.preferences()
+
+	for _, c := range ranked {
+		if ruledOutBy(c, failed) || !autoAcceptable(dl, c, prefs) {
+			continue
+		}
+
+		return c, true
+	}
+
+	return Candidate{}, false
+}
+
+// ruledOutBy reports whether a failure among failed also rules out c.
+func ruledOutBy(c Candidate, failed []Candidate) bool {
+	for _, f := range failed {
+		if c.ID == f.ID && c.ProviderID == f.ProviderID {
+			return true
+		}
+
+		if c.Kind == KindSlskd && f.Kind == KindSlskd &&
+			c.ProviderID == f.ProviderID && c.Origin != "" &&
+			c.Origin == f.Origin {
+			return true
+		}
+	}
+
+	return false
+}
+
+// describeCandidate names a candidate for the job log.
+func describeCandidate(c Candidate) string {
+	if c.Origin != "" {
+		return fmt.Sprintf("%q from %s", c.Title, c.Origin)
+	}
+
+	return fmt.Sprintf("%q", c.Title)
+}
+
+// finishGrab records a successful import and retires what the request
+// was holding.
+func (m *Manager) finishGrab(
+	ctx context.Context,
+	dl Download,
+	item DownloadItem,
+	imported ImportResult,
+	job *jobs.Handle,
+) {
 	if err := m.store.SetItemImported(
 		ctx, item.ID, imported.Paths,
 	); err != nil {
@@ -1175,23 +1339,6 @@ func (m *Manager) failDownload(
 	if job != nil {
 		job.Fail(err)
 	}
-}
-
-// failItem records an item-level failure and fails its download.
-func (m *Manager) failItem(
-	ctx context.Context,
-	job *jobs.Handle,
-	item DownloadItem,
-	downloadID string,
-	err error,
-) {
-	if serr := m.store.SetItemState(
-		ctx, item.ID, StateFailed, err.Error(),
-	); serr != nil {
-		m.logger.Warn("could not record item failure", "error", serr)
-	}
-
-	m.failDownload(ctx, job, downloadID, err)
 }
 
 // startJob registers the request in the background jobs panel.

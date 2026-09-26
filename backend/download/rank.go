@@ -735,6 +735,45 @@ func AutoPickVeto(
 	return ""
 }
 
+// autoAcceptable reports whether auto-pick may take this one candidate
+// without asking: the request is anchored to a tracklist, and the
+// candidate is inside the user's guardrails and clears the match and
+// quality bars.  It is AutoPickVeto's test applied to a single
+// candidate, which is what falling back to a second choice needs.
+func autoAcceptable(dl Download, c Candidate, prefs AutoDownloadPrefs) bool {
+	return dl.Anchored() &&
+		len(dl.Expected) > 0 &&
+		prefs.eligible(c, dl.runtimeMillis()) &&
+		c.Match.Overall >= minMatch &&
+		c.Quality.Overall >= minQuality
+}
+
+// autoPick returns the candidate auto-pick takes: the best-ranked one
+// it may take at all.
+//
+// That is not `ranked[0]`.  AutoPickVeto judges the best candidate
+// *inside* the guardrails, so when the overall best is outside them —
+// over the size ceiling, say — the veto passes on the strength of the
+// second, and grabbing the first would download exactly the copy the
+// user said not to take unattended.
+func autoPick(
+	dl Download,
+	ranked []Candidate,
+	prefs AutoDownloadPrefs,
+) (Candidate, bool) {
+	if AutoPickVeto(dl, ranked, prefs) != "" {
+		return Candidate{}, false
+	}
+
+	for _, c := range ranked {
+		if autoAcceptable(dl, c, prefs) {
+			return c, true
+		}
+	}
+
+	return Candidate{}, false
+}
+
 // mergeMatched copies MatchedTo assignments from the audio-only slice
 // back onto the full file list.
 func mergeMatched(all, matched []CandidateFile) []CandidateFile {

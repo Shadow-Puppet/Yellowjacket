@@ -47,7 +47,7 @@ func grabAll(
 		go func() {
 			defer wg.Done()
 
-			f.manager.grab(ctx, dl, candidate, nil)
+			f.manager.grab(ctx, dl, candidate, nil, false)
 		}()
 	}
 
