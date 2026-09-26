@@ -48,7 +48,7 @@ jobs:
       SHA: ${{ github.sha }}
       REF_NAME: ${{ github.ref_name }}
       DEBIAN_FRONTEND: noninteractive
-      GO_VERSION: '1.25.0'
+      GO_VERSION: '1.26.0'
       npm_config_store_dir: /cache/pnpm-store
     steps:
       # The same set ci.yml's check job installs: the app is cgo, and

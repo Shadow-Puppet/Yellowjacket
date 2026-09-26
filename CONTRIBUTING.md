@@ -13,7 +13,7 @@ frontend, bridged by [Wails v3](https://wails.io/).
 
 | Tool | Version |
 |------|---------|
-| Go | 1.25+ |
+| Go | 1.26+ |
 | Node.js | 22+ |
 | pnpm | 10+ |
 | Wails CLI | v3 — vendored, no install needed (`go tool wails3`) |

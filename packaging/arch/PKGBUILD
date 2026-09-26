@@ -18,7 +18,7 @@ arch=('x86_64')
 url="https://git.ljones.me/yonlu/yellowjacket"
 license=('custom')
 depends=('webkitgtk-6.0' 'gtk4' 'alsa-lib' 'hicolor-icon-theme')
-makedepends=('go>=1.25' 'nodejs>=22' 'pnpm' 'git')
+makedepends=('go>=1.26' 'nodejs>=22' 'pnpm' 'git')
 options=('!lto')
 
 # Source is overridable so the same PKGBUILD works two ways:

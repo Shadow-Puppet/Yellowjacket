@@ -36,7 +36,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.25.0'
+  GO_VERSION: '1.26.0'
   # Shared by all three Playwright consumers (@playwright/cli, e2e/'s
   # @playwright/test, frontend/'s Vitest provider).  See the browsers
   # step in job 2 for why that is not the whole story.
@@ -53,7 +53,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     container:
-      # Not golang:1.25 — this job runs `make ui-test`, which is Vitest
+      # Not golang:1.26 — this job runs `make ui-test`, which is Vitest
       # *browser* mode and needs a Chromium and its system libraries
       # anyway, so the "fast job needs no browser" split does not hold.
       # Not the Playwright image either: e2e/ pins @playwright/test

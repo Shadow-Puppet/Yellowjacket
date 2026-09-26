@@ -68,7 +68,7 @@ jobs:
       # claim with a test behind it now (cmd/indexbuild/deps_test.go),
       # because the v3 migration quietly broke it and this job was where
       # that surfaced.
-      image: golang:1.25
+      image: golang:1.26
       # This host path must exist on the runner and be listed verbatim in
       # act_runner's container.valid_volumes. It holds explore-staging/
       # (counts.bin + state.json) and yj.db — the checkpoint that makes

@@ -68,7 +68,7 @@ jobs:
       SHA: ${{ github.sha }}
       REF_NAME: ${{ github.ref_name }}
       DEBIAN_FRONTEND: noninteractive
-      GO_VERSION: '1.25.0'
+      GO_VERSION: '1.26.0'
       npm_config_store_dir: /cache/pnpm-store
       # The Go half wants the NDK; the Gradle half wants a platform.
       ANDROID_HOME: /cache/android-sdk
