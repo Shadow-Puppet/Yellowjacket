@@ -8,6 +8,7 @@ import (
 
 	"yellowjacket/backend/coverart"
 	"yellowjacket/backend/database/sql/sqlcgen"
+	"yellowjacket/internal/testfixtures"
 )
 
 // TestScan_StoresOnlyCoverTiers pins the size decision: a scan writes
@@ -26,10 +27,9 @@ func TestScan_StoresOnlyCoverTiers(t *testing.T) {
 
 	lib, db := setupTestLibrary(t)
 
-	root, err := filepath.Abs("../../test_data/music_library_test")
-	if err != nil {
-		t.Fatalf("resolve fixture path: %v", err)
-	}
+	// Load skips when the fixture library has not been generated, as
+	// every other fixture test does.
+	root := testfixtures.Load(t).Root()
 
 	library, err := db.Queries.CreateLibrary(lib.ctx, sqlcgen.CreateLibraryParams{
 		Name: "Fixtures",
