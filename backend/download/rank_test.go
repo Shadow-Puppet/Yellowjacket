@@ -282,28 +282,32 @@ func TestCompleteness(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		got      int
+		aligned  int
+		audio    int
 		want     int
 		minScore float64
 		maxScore float64
 	}{
-		{"exact", 10, 10, 1.0, 1.0},
-		{"half missing", 5, 10, 0.49, 0.51},
-		{"one bonus track", 11, 10, 0.95, 1.0},
-		{"double", 20, 10, 0.74, 0.76},
-		{"nothing", 0, 10, 0, 0},
-		{"no expectation", 5, 0, 0.5, 0.5},
+		{"exact", 10, 10, 10, 1.0, 1.0},
+		{"half missing", 5, 5, 10, 0.49, 0.51},
+		{"one bonus track", 10, 11, 10, 0.95, 1.0},
+		{"double", 10, 20, 10, 0.74, 0.76},
+		{"nothing", 0, 0, 10, 0, 0},
+		{"no expectation", 0, 5, 0, 0.5, 0.5},
+		// Ten files are not ten tracks: three that align are three.
+		{"right count, wrong tracks", 3, 10, 10, 0.29, 0.31},
+		{"files that align to nothing", 0, 10, 10, 0, 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := completeness(tt.got, tt.want)
+			got := completeness(tt.aligned, tt.audio, tt.want)
 			if got < tt.minScore || got > tt.maxScore {
 				t.Errorf(
-					"completeness(%d, %d) = %f, want in [%f, %f]",
-					tt.got, tt.want, got, tt.minScore, tt.maxScore,
+					"completeness(%d, %d, %d) = %f, want in [%f, %f]",
+					tt.aligned, tt.audio, tt.want, got, tt.minScore, tt.maxScore,
 				)
 			}
 		})

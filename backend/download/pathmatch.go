@@ -66,6 +66,14 @@ var (
 
 	// separatorPattern splits "Artist - Album" style folder names.
 	separatorPattern = regexp.MustCompile(`\s+[-–—]\s+`)
+
+	// discFolderPattern matches a directory that holds one disc of an
+	// album rather than the album: "CD1", "CD 2", "Disc 3", "Disk-1",
+	// "[Disc 2]", "CD1 - The Early Years".  A number is required, so a
+	// folder merely called "CDs" is not one.
+	discFolderPattern = regexp.MustCompile(
+		`(?i)^\s*[\[(]?\s*(?:cd|disc|disk)\s*[-_.#]?\s*(\d{1,2})\b`,
+	)
 )
 
 // FormatForPath returns the audio format implied by a path's extension,
@@ -94,16 +102,63 @@ type TrackHint struct {
 	Folder string
 }
 
+// discFolder reports whether a directory name is one disc of an album,
+// and which.
+func discFolder(name string) (int, bool) {
+	m := discFolderPattern.FindStringSubmatch(name)
+	if m == nil {
+		return 0, false
+	}
+
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n == 0 {
+		return 0, false
+	}
+
+	return n, true
+}
+
+// AlbumDir is the directory that holds a file's *album*: its parent,
+// or its grandparent when the parent is a disc folder.
+//
+// Multi-disc rips are shared as `Album/CD1/…` and `Album/CD2/…`, and
+// grouping candidates by the immediate parent split one album into two
+// half-albums, each titled "CD1".  Neither could clear the completeness
+// or album-title bars, so a multi-disc release could not be auto-picked
+// at all.  A disc folder at the root has no album above it and is
+// returned as it is.
+func AlbumDir(p string) string {
+	dir := path.Dir(strings.ReplaceAll(p, `\`, "/"))
+
+	if _, ok := discFolder(path.Base(dir)); !ok {
+		return dir
+	}
+
+	parent := path.Dir(dir)
+	if parent == "." || parent == "/" || parent == "" {
+		return dir
+	}
+
+	return parent
+}
+
 // ParsePath extracts what it can from one candidate file path.
 func ParsePath(p string) TrackHint {
 	// Soulseek paths are Windows-style; normalize before splitting.
 	norm := strings.ReplaceAll(p, `\`, "/")
 	base := path.Base(norm)
-	folder := path.Base(path.Dir(norm))
 
 	name := strings.TrimSuffix(base, path.Ext(base))
 
-	hint := TrackHint{Folder: cleanAlbumName(folder)}
+	// The album's name is the album directory's, not a disc folder's,
+	// and the disc folder is where a multi-disc rip says which disc a
+	// file is on.  A disc number in the filename ("2-01 …") is more
+	// specific and overrides it below.
+	hint := TrackHint{Folder: cleanAlbumName(path.Base(AlbumDir(norm)))}
+
+	if disc, ok := discFolder(path.Base(path.Dir(norm))); ok {
+		hint.Disc = disc
+	}
 
 	if m := trackNumPattern.FindStringSubmatch(name); m != nil {
 		if m[1] != "" {

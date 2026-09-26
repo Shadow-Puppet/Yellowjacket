@@ -70,8 +70,9 @@ const (
 	slskdTransferPoll = 3 * time.Second
 
 	// slskdMinFiles is the fewest audio files a folder needs before it
-	// is offered as a candidate.  Soulseek returns a lot of one-file
-	// noise for common queries.
+	// is offered as a candidate for an album.  Soulseek returns a lot of
+	// one-file noise for common queries.  A single-track request takes
+	// one (see minFilesFor).
 	slskdMinFiles = 2
 
 	// slskdHTTPTimeout bounds one API call.
@@ -330,7 +331,24 @@ func (s *slskd) Search(ctx context.Context, dl Download) ([]Candidate, error) {
 		)
 	}()
 
-	return s.candidatesFrom(search), nil
+	return s.candidatesFrom(search, minFilesFor(dl)), nil
+}
+
+// minFilesFor is the fewest audio files a folder must offer to be a
+// candidate for this request.
+//
+// Soulseek answers a search with the files that match it, not with the
+// folders they sit in.  An album query matches every file in the album's
+// folder, because the folder name carries the terms; a *track* query
+// usually matches one file per folder.  The two-file floor that filters
+// out one-file noise for an album therefore filtered out every result
+// for a track, and a single-track request could never be served here.
+func minFilesFor(dl Download) int {
+	if dl.RecordingMBID != "" {
+		return 1
+	}
+
+	return slskdMinFiles
 }
 
 // awaitSearch polls until the search completes or the budget runs out.
@@ -371,8 +389,9 @@ func (s *slskd) awaitSearch(
 	return last, nil
 }
 
-// candidatesFrom groups a search's responses into candidates.
-func (s *slskd) candidatesFrom(search slskdSearch) []Candidate {
+// candidatesFrom groups a search's responses into candidates, dropping
+// folders with fewer than minFiles audio files.
+func (s *slskd) candidatesFrom(search slskdSearch, minFiles int) []Candidate {
 	out := make([]Candidate, 0, len(search.Responses))
 
 	for _, resp := range search.Responses {
@@ -400,7 +419,7 @@ func (s *slskd) candidatesFrom(search slskdSearch) []Candidate {
 				total += f.Size
 			}
 
-			if audio < slskdMinFiles {
+			if audio < minFiles {
 				continue
 			}
 
@@ -421,13 +440,15 @@ func (s *slskd) candidatesFrom(search slskdSearch) []Candidate {
 	return out
 }
 
-// groupByFolder buckets a peer's files by their containing directory.
+// groupByFolder buckets a peer's files by the album directory they sit
+// in — the containing directory, or the one above it for a disc folder
+// (see AlbumDir), so a multi-disc rip is one candidate and not two.
 func groupByFolder(files []slskdFile) map[string][]slskdFile {
 	out := map[string][]slskdFile{}
 
 	for _, f := range files {
-		norm := strings.ReplaceAll(f.Filename, `\`, "/")
-		out[path.Dir(norm)] = append(out[path.Dir(norm)], f)
+		dir := AlbumDir(f.Filename)
+		out[dir] = append(out[dir], f)
 	}
 
 	return out
@@ -817,7 +838,13 @@ func (s *slskd) collect(c Candidate, dst string) (Result, error) {
 			continue
 		}
 
+		// A multi-disc candidate keeps its disc folders in staging.
+		// Flattened, disc 2's "01 Intro.flac" overwrites disc 1's, and
+		// the importer loses the folder it reads the disc number from.
 		target := filepath.Join(dst, base)
+		if _, ok := discFolder(folder); ok {
+			target = filepath.Join(dst, folder, base)
+		}
 
 		if err := movePath(src, target); err != nil {
 			return Result{}, fmt.Errorf("collect %s: %w", base, err)

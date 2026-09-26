@@ -347,7 +347,9 @@ func scoreMatch(
 		TitleFit: titleFit,
 	}
 
-	m.Completeness = completeness(len(audio), len(dl.Expected))
+	m.Completeness = completeness(
+		alignedCount(c.Files), len(audio), len(dl.Expected),
+	)
 
 	// The candidate's own title, and the folder its files sit in, are
 	// two independent guesses at the album name.  Take the better one:
@@ -415,30 +417,54 @@ func artistFit(want string, c Candidate) float64 {
 	return best
 }
 
-// completeness scores audio file count against the expected track
-// count.  Extra files are penalized far more gently than missing ones:
+// completeness scores how much of the expected tracklist a candidate
+// covers.  Extra files are penalized far more gently than missing ones:
 // a folder with bonus tracks or a stray intro is still the album, while
 // a folder missing half the tracks is not.
-func completeness(got, want int) float64 {
+//
+// **Coverage is counted in aligned tracks, not in files.**  It used to
+// be the audio file count, so any ten files scored full marks against
+// a ten-track album whether or not they were its tracks — and since
+// title fit is the mean over the files that *did* align, a folder where
+// three titles matched read as a near-perfect candidate on both counts.
+// `aligned` is how many files matchFiles assigned to an expected track;
+// `audio` still sets the penalty for extras, because a folder of thirty
+// files holding the ten wanted is a worse copy than one holding ten.
+func completeness(aligned, audio, want int) float64 {
 	if want == 0 {
-		if got > 0 {
+		if audio > 0 {
 			return 0.5
 		}
 
 		return 0
 	}
 
-	if got == 0 {
+	if aligned == 0 {
 		return 0
 	}
 
-	if got >= want {
-		extra := float64(got-want) / float64(want)
+	cover := float64(min(aligned, want)) / float64(want)
 
-		return math.Max(0.75, 1.0-0.25*extra)
+	if audio > want {
+		extra := float64(audio-want) / float64(want)
+		cover *= math.Max(0.75, 1.0-0.25*extra)
 	}
 
-	return float64(got) / float64(want)
+	return cover
+}
+
+// alignedCount is how many audio files were assigned to an expected
+// track.
+func alignedCount(files []CandidateFile) int {
+	n := 0
+
+	for _, f := range files {
+		if f.IsAudio && f.MatchedTo != 0 {
+			n++
+		}
+	}
+
+	return n
 }
 
 // scoreQuality answers whether this is a good copy.
