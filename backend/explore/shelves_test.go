@@ -3,6 +3,7 @@ package explore
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"testing"
 
 	"yellowjacket/backend/database"
@@ -201,6 +202,11 @@ func TestShelves_MoreFromOwnedNeedsExactlyOneOwnedAlbum(t *testing.T) {
 	for _, album := range shelf.Albums {
 		titles = append(titles, album.Title)
 	}
+
+	// The row is a random sample, so the *set* is what is asserted and
+	// not the order — see `unownedAlbumsBySinglyOwnedArtists` for why
+	// the ordering was given up.
+	sort.Strings(titles)
 
 	if len(titles) != 2 || titles[0] != "Second" || titles[1] != "Third" {
 		t.Fatalf("albums = %v, want [Second Third]", titles)

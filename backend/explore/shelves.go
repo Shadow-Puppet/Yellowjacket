@@ -383,9 +383,13 @@ func (si *SearchIndex) topByPopularity(
 // MusicBrainz IDs, so this never touches the library tables and asks
 // one query rather than one per artist.
 //
-// The artists are drawn most-popular-owned-album first, so a large
-// library's pool is the part of it the user is likeliest to recognise
-// rather than whichever artists sort first.
+// **The row is drawn at random, and that is the whole point of it.**
+// Ordered by popularity it was a second leaderboard: the same handful of
+// big names appeared every time the page opened, which is not what "you
+// own one album by these artists" is saying. The pool is still bounded
+// to `pool` artists — a 4 000-artist library does not need all of them
+// ranked — but which of them, and which of their albums, is `RANDOM()`,
+// so the shelf is a different sample each visit.
 func (si *SearchIndex) unownedAlbumsBySinglyOwnedArtists(
 	ctx context.Context,
 	pool, limit int,
@@ -396,15 +400,17 @@ func (si *SearchIndex) unownedAlbumsBySinglyOwnedArtists(
 		 WHERE entity_type = 2 /* release_group */
 		   AND in_library = 0
 		   AND artist_mbid IN (
-		       SELECT artist_mbid FROM explore_index
-		       WHERE entity_type = 2 /* release_group */
-		         AND in_library = 1
-		         AND artist_mbid != x''
-		       GROUP BY artist_mbid
-		       HAVING COUNT(*) = 1
-		       ORDER BY MAX(popularity) DESC
+		       SELECT artist_mbid FROM (
+		           SELECT artist_mbid FROM explore_index
+		           WHERE entity_type = 2 /* release_group */
+		             AND in_library = 1
+		             AND artist_mbid != x''
+		           GROUP BY artist_mbid
+		           HAVING COUNT(*) = 1
+		       )
+		       ORDER BY RANDOM()
 		       LIMIT ?)
-		 ORDER BY popularity DESC
+		 ORDER BY RANDOM()
 		 LIMIT ?`,
 		pool, limit,
 	))
