@@ -236,17 +236,18 @@ func Register(d Descriptor, c Constructor) {
 }
 
 // concurrencyField describes the per-provider transfer limit, with help
-// text explaining why the default is what it is — a user who raises
-// slskd from 1 to 8 and gets themselves queued behind every other
-// Soulseek user deserves to have been warned.
+// text explaining what the number means where it means something
+// unusual: on slskd it counts peers, since each peer is only ever asked
+// for one folder at a time whatever it is set to.
 func concurrencyField(k Kind) Field {
 	help := "Maximum simultaneous transfers from this client."
 
 	if k == KindSlskd {
-		help = "Maximum simultaneous transfers. Soulseek peers serve " +
-			"one file at a time and queue or ban clients that ask for " +
-			"more, so 1 is both the polite setting and usually the " +
-			"fastest."
+		help = "How many Soulseek users to download from at once. " +
+			"Each user is only ever asked for one album at a time, " +
+			"since peers queue or ban clients that ask for more; " +
+			"this bounds how many different users are asked in " +
+			"parallel."
 	}
 
 	return Field{

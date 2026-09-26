@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -742,6 +743,12 @@ func (s *slskd) Grab(
 	// first poll came back — an old failure failing a transfer that has
 	// not started.  So what is already terminal is noted before enqueueing
 	// and ignored after.
+	release, err := lockSlskdFolders(ctx, s.localFolders(c))
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
+
 	stale := s.terminalTransferIDs(ctx, username)
 
 	wanted := make([]map[string]any, 0, len(c.Files))
@@ -765,6 +772,59 @@ func (s *slskd) Grab(
 	}
 
 	return s.collect(c, dst)
+}
+
+// slskdFolders serialises grabs that land in the same local folder.
+//
+// slskd names a download's directory after the remote *leaf* folder, so
+// two different albums both shared as "Greatest Hits" — or any two
+// multi-disc rips, whose leaves are "CD1" and "CD2" — are written into
+// one directory, and collect finds files by name there.  Run at once,
+// a file one peer never sent is filled by the other peer's file of the
+// same name.  One grab per peer made that impossible; several peers at
+// once makes it likely.  It is package-level and keyed on the full
+// path because two configured clients can share one daemon.
+var slskdFolders keyedLock[string]
+
+// localFolders returns the directories under downloadsPath a candidate's
+// files will be written to, sorted so every grab takes them in the same
+// order and two cannot each hold what the other waits for.
+func (s *slskd) localFolders(c Candidate) []string {
+	var out []string
+
+	for _, f := range c.Files {
+		norm := strings.ReplaceAll(f.Path, `\`, "/")
+		out = append(out, filepath.Join(s.downloadsPath, path.Base(path.Dir(norm))))
+	}
+
+	slices.Sort(out)
+
+	return slices.Compact(out)
+}
+
+// lockSlskdFolders takes every folder in order, releasing what it holds
+// if the context ends part way.
+func lockSlskdFolders(ctx context.Context, folders []string) (func(), error) {
+	releases := make([]func(), 0, len(folders))
+
+	releaseAll := func() {
+		for _, r := range slices.Backward(releases) {
+			r()
+		}
+	}
+
+	for _, f := range folders {
+		r, err := slskdFolders.acquire(ctx, f)
+		if err != nil {
+			releaseAll()
+
+			return nil, err
+		}
+
+		releases = append(releases, r)
+	}
+
+	return releaseAll, nil
 }
 
 // slskdDownloadsPath is the transfers endpoint for one peer.  Soulseek

@@ -59,13 +59,15 @@ const concurrencyKey = "maxConcurrent"
 // A single global cap is the wrong shape here: usenet and torrent
 // clients are built to run many transfers at once and are throttled by
 // bandwidth, while Soulseek transfers come from one person's home
-// upload slot.  Hitting the same peer with parallel requests gets you
-// queued behind everyone else at best and banned at worst, so slskd is
-// capped at one — the polite number, and the one that actually
-// completes fastest, because a Soulseek peer serves one file at a time
-// regardless of how many you ask for.
+// upload slot.  Politeness there is per *peer* — asking one user for two
+// folders at once gets you queued behind everyone else at best and
+// banned at worst — and the manager holds that line separately, one
+// grab per peer (peerLocks).  Two different users do not compete for
+// anyone's slot, so the daemon-wide number only bounds how many peers
+// are asked at once, and one slow peer no longer serialises every other
+// Soulseek download behind it.
 var kindConcurrency = map[Kind]int{
-	KindSlskd:       1,
+	KindSlskd:       3,
 	KindYtDlp:       2,
 	KindQBittorrent: 4,
 	KindSABnzbd:     4,
@@ -154,6 +156,11 @@ type Manager struct {
 	// transfer could have used.
 	semMu   sync.Mutex
 	provSem map[int64]chan struct{}
+
+	// peerLocks holds one grab per Soulseek peer, taken before any
+	// slot: a grab waiting for a busy peer must not sit on a provider
+	// slot another peer could be using.
+	peerLocks keyedLock[peerKey]
 
 	// delegatePoll is how often delegating managers are asked for
 	// status.  A field rather than the constant so tests can drive the
@@ -790,6 +797,23 @@ func (m *Manager) grab(
 // whole list for six hours.
 const maxGrabAttempts = 3
 
+// peerKey names one Soulseek user on one daemon.  The same username on
+// two daemons is two logins and two queues.
+type peerKey struct {
+	provider int64
+	peer     string
+}
+
+// peerKeyFor returns the peer a candidate is fetched from, when the
+// source is one where asking a peer for two things at once is rude.
+func peerKeyFor(c Candidate) (peerKey, bool) {
+	if c.Kind != KindSlskd || c.Origin == "" {
+		return peerKey{}, false
+	}
+
+	return peerKey{provider: c.ProviderID, peer: c.Origin}, true
+}
+
 // grabOutcome is how one candidate's attempt ended.
 type grabOutcome struct {
 	item     DownloadItem
@@ -825,6 +849,15 @@ func (m *Manager) attemptGrab(
 	}
 
 	if !plan.delegated() {
+		if key, ok := peerKeyFor(c); ok {
+			release, err := m.peerLocks.acquire(ctx, key)
+			if err != nil {
+				return grabOutcome{err: err}
+			}
+
+			defer release()
+		}
+
 		provSem := m.semaphoreFor(plan.transportID)
 
 		select {

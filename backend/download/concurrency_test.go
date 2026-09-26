@@ -79,9 +79,9 @@ func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 		want int
 	}{
 		{
-			name: "slskd defaults to one",
+			name: "slskd defaults to a few peers",
 			cfg:  Config{Kind: KindSlskd},
-			want: 1,
+			want: 3,
 		},
 		{
 			name: "usenet defaults higher",
@@ -92,9 +92,9 @@ func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 			name: "explicit override wins",
 			cfg: Config{
 				Kind:     KindSlskd,
-				Settings: map[string]string{concurrencyKey: "3"},
+				Settings: map[string]string{concurrencyKey: "1"},
 			},
-			want: 3,
+			want: 1,
 		},
 		{
 			name: "nonsense override falls back",
@@ -102,7 +102,7 @@ func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 				Kind:     KindSlskd,
 				Settings: map[string]string{concurrencyKey: "not a number"},
 			},
-			want: 1,
+			want: 3,
 		},
 		{
 			name: "zero override falls back",
@@ -110,7 +110,7 @@ func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 				Kind:     KindSlskd,
 				Settings: map[string]string{concurrencyKey: "0"},
 			},
-			want: 1,
+			want: 3,
 		},
 		{
 			name: "unknown kind falls back to the global default",
@@ -126,9 +126,9 @@ func TestConcurrencyForPrefersOverrideThenKind(t *testing.T) {
 	}
 }
 
-// The reason the per-provider cap exists: a Soulseek daemon capped at
-// one transfer must serialize, even when the global cap would allow
-// more and the user has queued several albums at once.
+// The reason the per-provider cap exists: a daemon capped at one
+// transfer must serialize, even when the global cap would allow more and
+// the user has queued several albums at once.
 func TestPerProviderCapSerializesTransfers(t *testing.T) {
 	t.Parallel()
 
@@ -142,6 +142,7 @@ func TestPerProviderCapSerializesTransfers(t *testing.T) {
 		ID:       1,
 		Kind:     KindSlskd,
 		Priority: 50,
+		Settings: map[string]string{concurrencyKey: "1"},
 	}, slow)
 
 	// Three requests against the same one-at-a-time provider.
@@ -210,8 +211,8 @@ func TestSyncSemaphoresReplacesChangedLimits(t *testing.T) {
 	f.manager.installProvider(Config{ID: 1, Kind: KindSlskd}, nil)
 
 	first := f.manager.semaphoreFor(1)
-	if cap(first) != 1 {
-		t.Fatalf("slskd semaphore cap = %d, want 1", cap(first))
+	if want := kindConcurrency[KindSlskd]; cap(first) != want {
+		t.Fatalf("slskd semaphore cap = %d, want %d", cap(first), want)
 	}
 
 	// Same limit: the semaphore is kept, so in-flight accounting is not
