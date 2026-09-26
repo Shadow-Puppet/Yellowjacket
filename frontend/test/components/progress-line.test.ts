@@ -172,8 +172,7 @@ describe('<player-progress-line>', () => {
      * The reason this component asks `matchMedia` instead of letting a
      * stylesheet hide it: a media query cannot stop a 1 Hz interval
      * running for the life of every desktop session. That claim is
-     * load-bearing in CLAUDE.md, so it is asserted rather than
-     * described — the timer count, because a desktop render is empty
+     * load-bearing, so it is asserted rather than described — the timer count, because a desktop render is empty
      * either way and so cannot tell the two apart.
      */
     it('runs no interpolation timer above the breakpoint', async () => {
