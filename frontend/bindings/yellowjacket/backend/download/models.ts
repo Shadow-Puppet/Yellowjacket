@@ -122,6 +122,12 @@ export interface CandidateFile {
     "isAudio": boolean;
 
     /**
+     * LengthMillis is the file's duration as the source reports it, or
+     * 0 when it does not.  Soulseek reports it for most audio files.
+     */
+    "lengthMillis"?: number;
+
+    /**
      * expected track position
      */
     "matchedTo"?: number;
@@ -453,9 +459,18 @@ export interface MatchScore {
     "albumFit": number;
 
     /**
-     * audio files vs expected count
+     * aligned tracks vs expected count
      */
     "completeness": number;
+
+    /**
+     * DurationFit is how well the aligned files' lengths agree with the
+     * expected tracks', and DurationKnown whether enough of them stated
+     * a length for that to count.  When it does not, the score is the
+     * four text signals alone, exactly as before durations were read.
+     */
+    "durationFit": number;
+    "durationKnown": boolean;
 
     /**
      * Anchored records whether an MBID drove this score.  Unanchored

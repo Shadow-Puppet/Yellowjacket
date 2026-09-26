@@ -46,6 +46,15 @@ type slskdStub struct {
 
 	// unauthorized makes every call return 401.
 	unauthorized bool
+
+	// searches records every search request body, and searchGets the
+	// request URI of every search GET.
+	searches   []map[string]any
+	searchGets []string
+
+	// noResponsesEndpoint makes /searches/{id}/responses 404, as an
+	// older daemon would.
+	noResponsesEndpoint bool
 }
 
 func newSlskdStub(t *testing.T) *slskdStub {
@@ -67,6 +76,16 @@ func newSlskdStub(t *testing.T) *slskdStub {
 			return
 		}
 
+		var body map[string]any
+
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode search body: %v", err)
+		}
+
+		s.mu.Lock()
+		s.searches = append(s.searches, body)
+		s.mu.Unlock()
+
 		w.WriteHeader(http.StatusCreated)
 	})
 
@@ -83,7 +102,25 @@ func newSlskdStub(t *testing.T) *slskdStub {
 
 		s.mu.Lock()
 		responses := s.responses
+		noEndpoint := s.noResponsesEndpoint
+		s.searchGets = append(s.searchGets, r.URL.RequestURI())
 		s.mu.Unlock()
+
+		if strings.HasSuffix(r.URL.Path, "/responses") {
+			if noEndpoint {
+				w.WriteHeader(http.StatusNotFound)
+
+				return
+			}
+
+			writeJSON(t, w, responses)
+
+			return
+		}
+
+		if r.URL.Query().Get("includeResponses") != "true" {
+			responses = nil
+		}
 
 		writeJSON(t, w, slskdSearch{
 			ID:         "search-1",

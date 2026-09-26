@@ -232,12 +232,17 @@ type Candidate struct {
 // results give paths and sizes but no tags, so Format and duration are
 // inferred from the path and size where possible.
 type CandidateFile struct {
-	Path      string `json:"path"`
-	Size      int64  `json:"size"`
-	Format    Format `json:"format"`
-	Bitrate   int    `json:"bitrate,omitempty"` // kbps, 0 when unknown
-	IsAudio   bool   `json:"isAudio"`
-	MatchedTo int    `json:"matchedTo,omitempty"` // expected track position
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Format  Format `json:"format"`
+	Bitrate int    `json:"bitrate,omitempty"` // kbps, 0 when unknown
+	IsAudio bool   `json:"isAudio"`
+
+	// LengthMillis is the file's duration as the source reports it, or
+	// 0 when it does not.  Soulseek reports it for most audio files.
+	LengthMillis int64 `json:"lengthMillis,omitempty"`
+
+	MatchedTo int `json:"matchedTo,omitempty"` // expected track position
 }
 
 // Format is a normalized audio container/codec name.
@@ -286,7 +291,14 @@ type MatchScore struct {
 	TitleFit     float64 `json:"titleFit"`     // filenames vs expected titles
 	ArtistFit    float64 `json:"artistFit"`    // path/origin vs expected artist
 	AlbumFit     float64 `json:"albumFit"`     // folder name vs album title
-	Completeness float64 `json:"completeness"` // audio files vs expected count
+	Completeness float64 `json:"completeness"` // aligned tracks vs expected count
+
+	// DurationFit is how well the aligned files' lengths agree with the
+	// expected tracks', and DurationKnown whether enough of them stated
+	// a length for that to count.  When it does not, the score is the
+	// four text signals alone, exactly as before durations were read.
+	DurationFit   float64 `json:"durationFit"`
+	DurationKnown bool    `json:"durationKnown"`
 
 	// Anchored records whether an MBID drove this score.  Unanchored
 	// matches are capped, because there is nothing to be right about.

@@ -35,6 +35,15 @@ const (
 	weightArtistFit    = 0.12
 )
 
+// Match sub-weights when the candidate's durations are known.  Duration
+// takes its weight from title fit, the signal it corroborates: a title
+// says which song a file claims to be, a length says whether it is that
+// recording — the right edit, the whole file, not the live take.
+const (
+	timedWeightTitleFit    = 0.25
+	timedWeightDurationFit = 0.15
+)
+
 // Quality sub-weights.  Each set sums to 1.0.
 //
 // There are two of them because a stated preference changes what the
@@ -319,13 +328,13 @@ func Score(dl Download, c Candidate, priority int, prefs AutoDownloadPrefs) Cand
 
 	audio := c.AudioFiles()
 
-	matched, titleFit := matchFiles(audio, dl.Expected)
+	a := alignFiles(audio, dl.Expected)
 
 	// Write the alignment back so the picker can show which file maps
 	// to which track.
-	c.Files = mergeMatched(c.Files, matched)
+	c.Files = mergeMatched(c.Files, a.files)
 
-	c.Match = scoreMatch(dl, c, audio, titleFit)
+	c.Match = scoreMatch(dl, c, audio, a)
 	c.Quality = scoreQuality(
 		c, audio, priority, prefs, dl.runtimeMillis(),
 	)
@@ -340,11 +349,16 @@ func scoreMatch(
 	dl Download,
 	c Candidate,
 	audio []CandidateFile,
-	titleFit float64,
+	a alignment,
 ) MatchScore {
 	m := MatchScore{
-		Anchored: dl.Anchored(),
-		TitleFit: titleFit,
+		Anchored:    dl.Anchored(),
+		TitleFit:    a.titleFit,
+		DurationFit: a.durationFit,
+
+		// Durations count once at least half the aligned pairs state
+		// one; a single timed pair would be a coin toss carrying 15%.
+		DurationKnown: a.timedPairs > 0 && a.timedPairs*2 >= a.aligned,
 	}
 
 	m.Completeness = completeness(
@@ -369,9 +383,16 @@ func scoreMatch(
 	// With no expected tracklist there is no title signal at all, so
 	// redistribute its weight onto the album/artist evidence rather
 	// than scoring every free-text result as half-wrong.
-	if len(dl.Expected) == 0 {
+	switch {
+	case len(dl.Expected) == 0:
 		m.Overall = 0.55*m.AlbumFit + 0.45*m.ArtistFit
-	} else {
+	case m.DurationKnown:
+		m.Overall = timedWeightTitleFit*m.TitleFit +
+			timedWeightDurationFit*m.DurationFit +
+			weightCompleteness*m.Completeness +
+			weightAlbumFit*m.AlbumFit +
+			weightArtistFit*m.ArtistFit
+	default:
 		m.Overall = weightTitleFit*m.TitleFit +
 			weightCompleteness*m.Completeness +
 			weightAlbumFit*m.AlbumFit +

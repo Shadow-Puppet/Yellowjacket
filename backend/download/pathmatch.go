@@ -258,21 +258,72 @@ func AnnotateFiles(files []CandidateFile) []CandidateFile {
 
 // matchFiles aligns a candidate's audio files to the expected tracklist
 // and returns the per-file assignment plus the mean title similarity of
-// the aligned pairs.
+// the aligned pairs.  alignFiles is the same alignment with the
+// duration evidence as well.
+func matchFiles(
+	files []CandidateFile,
+	expected []ExpectedTrack,
+) ([]CandidateFile, float64) {
+	a := alignFiles(files, expected)
+
+	return a.files, a.titleFit
+}
+
+// alignment is what aligning a candidate to a tracklist found.
+type alignment struct {
+	files []CandidateFile
+
+	// titleFit is the mean title similarity over aligned pairs.
+	titleFit float64
+
+	// durationFit is the mean duration agreement over aligned pairs
+	// where both sides state a length, and timedPairs is how many such
+	// pairs there were.
+	durationFit float64
+	timedPairs  int
+	aligned     int
+}
+
+// durationAgreement scores how well a file's length matches the
+// expected track's, in 0..1.  Rips of the same master differ by a
+// second or two of silence; a different edit, a live take or a
+// truncated file differs by tens of seconds.
+func durationAgreement(got, want int64) float64 {
+	const (
+		exactMillis = 3_000
+		wrongMillis = 30_000
+	)
+
+	d := got - want
+	if d < 0 {
+		d = -d
+	}
+
+	switch {
+	case d <= exactMillis:
+		return 1
+	case d >= wrongMillis:
+		return 0
+	default:
+		return 1 - float64(d-exactMillis)/float64(wrongMillis-exactMillis)
+	}
+}
+
+// alignFiles aligns a candidate's audio files to the expected tracklist.
 //
 // Alignment is greedy by score rather than optimal: candidate folders
 // are small (a few dozen files at most) and the common cases — correct
 // track numbers, or clean "NN Title" names — are unambiguous, so the
 // extra machinery of Hungarian assignment buys nothing here.
-func matchFiles(
+func alignFiles(
 	files []CandidateFile,
 	expected []ExpectedTrack,
-) ([]CandidateFile, float64) {
+) alignment {
 	annotated := make([]CandidateFile, len(files))
 	copy(annotated, files)
 
 	if len(expected) == 0 {
-		return annotated, 0
+		return alignment{files: annotated}
 	}
 
 	hints := make([]TrackHint, len(annotated))
@@ -285,7 +336,18 @@ func matchFiles(
 	var (
 		total   float64
 		matched int
+
+		durTotal float64
+		timed    int
 	)
+
+	// timing adds a pair's duration evidence when both sides state one.
+	timing := func(f CandidateFile, e ExpectedTrack) {
+		if f.LengthMillis > 0 && e.LengthMillis > 0 {
+			durTotal += durationAgreement(f.LengthMillis, e.LengthMillis)
+			timed++
+		}
+	}
 
 	// Pass 1: trust explicit track numbers when they are unique and in
 	// range.  A folder that numbers its files correctly is the strong
@@ -305,6 +367,8 @@ func matchFiles(
 
 		total += autotag.TitleSimilarity(hints[i].Title, expected[idx].Title)
 		matched++
+
+		timing(annotated[i], expected[idx])
 	}
 
 	// Pass 2: title similarity for whatever is left.
@@ -339,13 +403,26 @@ func matchFiles(
 
 		total += bestSim
 		matched++
+
+		timing(annotated[i], expected[bestIdx])
 	}
 
 	if matched == 0 {
-		return annotated, 0
+		return alignment{files: annotated}
 	}
 
-	return annotated, total / float64(matched)
+	a := alignment{
+		files:      annotated,
+		titleFit:   total / float64(matched),
+		timedPairs: timed,
+		aligned:    matched,
+	}
+
+	if timed > 0 {
+		a.durationFit = durTotal / float64(timed)
+	}
+
+	return a
 }
 
 // indexForPosition finds the expected track at a disc/track position.

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -77,6 +78,9 @@ const (
 
 	// slskdHTTPTimeout bounds one API call.
 	slskdHTTPTimeout = 20 * time.Second
+
+	// millisPerSecond converts slskd's whole-second file lengths.
+	millisPerSecond = 1000
 
 	// slskdStallAfter is how long a grab may go without a byte arriving
 	// before the peer is given up on.  It is measured from enqueue, so
@@ -255,14 +259,13 @@ type slskdSearch struct {
 
 // slskdResponse is one peer's answer to a search.
 type slskdResponse struct {
-	Username           string      `json:"username"`
-	HasFreeUploadSlot  bool        `json:"hasFreeUploadSlot"`
-	QueueLength        int         `json:"queueLength"`
-	UploadSpeed        int64       `json:"uploadSpeed"`
-	Files              []slskdFile `json:"files"`
-	LockedFileCount    int         `json:"lockedFileCount"`
-	FileCount          int         `json:"fileCount"`
-	FreeUploadSlotFlag bool        `json:"freeUploadSlots"`
+	Username          string      `json:"username"`
+	HasFreeUploadSlot bool        `json:"hasFreeUploadSlot"`
+	QueueLength       int         `json:"queueLength"`
+	UploadSpeed       int64       `json:"uploadSpeed"`
+	Files             []slskdFile `json:"files"`
+	LockedFileCount   int         `json:"lockedFileCount"`
+	FileCount         int         `json:"fileCount"`
 }
 
 // slskdFile is one file a peer is offering.
@@ -270,7 +273,9 @@ type slskdFile struct {
 	Filename string `json:"filename"`
 	Size     int64  `json:"size"`
 	BitRate  int    `json:"bitRate"`
-	Length   int    `json:"length"`
+
+	// Length is the duration in whole seconds.
+	Length int `json:"length"`
 }
 
 // slskdTransfer is one download's state.
@@ -302,24 +307,89 @@ func (t slskdTransfer) done() (finished, ok bool) {
 // per-folder candidates.  A folder from one peer is the unit a user
 // actually wants: Soulseek has no album concept, but people organise
 // their shares by album directory.
+//
+// Up to two queries run at once — the request as written and a
+// normalised form of it (see slskdQueries) — and their candidates are
+// merged.  They run concurrently rather than as a fallback because the
+// manager gives a provider one search budget, and a Soulseek search
+// spends most of it waiting for peers to answer; a second query after
+// the first would not fit.
 func (s *slskd) Search(ctx context.Context, dl Download) ([]Candidate, error) {
+	queries := slskdQueries(dl)
+	if len(queries) == 0 {
+		return nil, nil
+	}
+
+	type found struct {
+		candidates []Candidate
+		err        error
+	}
+
+	results := make(chan found, len(queries))
+
+	for _, q := range queries {
+		go func(q string) {
+			c, err := s.searchOnce(ctx, q, minFilesFor(dl))
+			results <- found{candidates: c, err: err}
+		}(q)
+	}
+
+	var (
+		out      []Candidate
+		seen     = map[string]bool{}
+		firstErr error
+		answered int
+	)
+
+	for range queries {
+		r := <-results
+		if r.err != nil {
+			s.logger.Debug("slskd search failed", "error", r.err)
+
+			if firstErr == nil {
+				firstErr = r.err
+			}
+
+			continue
+		}
+
+		answered++
+
+		// The same peer's folder turns up under both queries; the ID is
+		// peer and folder, so it is the same candidate.
+		for _, c := range r.candidates {
+			if seen[c.ID] {
+				continue
+			}
+
+			seen[c.ID] = true
+
+			out = append(out, c)
+		}
+	}
+
+	if answered == 0 {
+		return nil, firstErr
+	}
+
+	return out, nil
+}
+
+// searchOnce runs one query to completion and returns its candidates.
+func (s *slskd) searchOnce(
+	ctx context.Context,
+	text string,
+	minFiles int,
+) ([]Candidate, error) {
 	// slskd's search endpoint deserializes id as a .NET Guid server-side,
 	// so it must be a dashed UUID — the app's own newID() (a plain hex
 	// string, used for request/item IDs elsewhere) is rejected with an
 	// HTTP 400 before any search happens.
 	searchID := uuid.NewString()
 
-	body := map[string]any{
-		"id":         searchID,
-		"searchText": dl.SearchText(),
-	}
-
-	if err := s.client.post(ctx, "/api/v0/searches", body, nil); err != nil {
-		return nil, err
-	}
-
-	search, err := s.awaitSearch(ctx, searchID)
-	if err != nil {
+	if err := s.client.post(
+		ctx, "/api/v0/searches", s.searchRequest(searchID, text, minFiles), nil,
+	); err != nil {
 		return nil, err
 	}
 
@@ -331,7 +401,123 @@ func (s *slskd) Search(ctx context.Context, dl Download) ([]Candidate, error) {
 		)
 	}()
 
-	return s.candidatesFrom(search, minFilesFor(dl)), nil
+	if err := s.awaitSearch(ctx, searchID); err != nil {
+		return nil, err
+	}
+
+	responses, err := s.searchResponses(ctx, searchID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.candidatesFrom(responses, minFiles), nil
+}
+
+// searchRequest is the body that starts a search.
+//
+// Every option is stated rather than left to the daemon, because
+// slskd's defaults are its own and not ours.  Its search timeout in
+// particular has to finish inside our wait: a search that slskd is still
+// running when we stop polling is results we asked for and discarded.
+// The response and file limits are raised well above what a popular
+// album produces, and the peer filters let slskd drop answers this
+// provider would only score down to nothing — a folder too small to be
+// a candidate, a peer with a queue it will not reach today.
+func (s *slskd) searchRequest(id, text string, minFiles int) map[string]any {
+	const (
+		responseLimit          = 500
+		fileLimit              = 20_000
+		maximumPeerQueueLength = 100
+	)
+
+	// A tenth of the wait is left for the last poll and the responses
+	// fetch.
+	timeout := s.searchWait - s.searchWait/10
+
+	return map[string]any{
+		"id":                       id,
+		"searchText":               text,
+		"searchTimeout":            timeout.Milliseconds(),
+		"responseLimit":            responseLimit,
+		"fileLimit":                fileLimit,
+		"filterResponses":          true,
+		"minimumResponseFileCount": minFiles,
+		"maximumPeerQueueLength":   maximumPeerQueueLength,
+	}
+}
+
+// slskdQueries is what is searched for a request: the request's own
+// search text, and a normalised form of it when that differs.
+//
+// Soulseek matches every term against the file's full path, so each
+// extra word is a filter, and some words filter wrongly:
+//
+//   - edition qualifiers — "(Deluxe Edition)", "[2011 Remaster]" — are
+//     in the catalog's title and rarely in anyone's folder name;
+//   - punctuation splits a term oddly, and a term that starts with "-"
+//     is an *exclusion*, so an album called "-ism" searches for
+//     everything without it;
+//   - "Various Artists" is in no one's path for a compilation.
+//
+// A query the user typed is theirs and is searched exactly as written.
+func slskdQueries(dl Download) []string {
+	primary := strings.TrimSpace(dl.SearchText())
+	if primary == "" {
+		return nil
+	}
+
+	out := []string{primary}
+
+	if dl.Query != "" {
+		return out
+	}
+
+	artist := dl.Artist
+	if isVariousArtists(artist) {
+		artist = ""
+	}
+
+	normal := Download{
+		Artist: normalizeSearchTerms(artist),
+		Album:  normalizeSearchTerms(editionPattern.ReplaceAllString(dl.Album, " ")),
+	}
+
+	if alt := strings.TrimSpace(normal.SearchText()); alt != "" &&
+		!strings.EqualFold(alt, primary) {
+		out = append(out, alt)
+	}
+
+	return out
+}
+
+var (
+	// editionPattern finds an edition qualifier: a bracketed group that
+	// names an edition, or a trailing " - 2011 Remaster".
+	editionPattern = regexp.MustCompile(
+		`(?i)\s*[(\[][^)\]]*\b(?:deluxe|edition|remaster(?:ed)?|expanded|` +
+			`anniversary|bonus|explicit|reissue|special|collector'?s?|` +
+			`version|mono|stereo)\b[^)\]]*[)\]]` +
+			`|\s+-\s+(?:\d{4}\s+)?remaster(?:ed)?\b.*$`,
+	)
+
+	// nonWordPattern is everything that is not a letter or a digit.
+	nonWordPattern = regexp.MustCompile(`[^\p{L}\p{N}]+`)
+)
+
+// normalizeSearchTerms reduces text to plain words.
+func normalizeSearchTerms(s string) string {
+	return strings.Join(strings.Fields(nonWordPattern.ReplaceAllString(s, " ")), " ")
+}
+
+// isVariousArtists reports whether an artist credit is a compilation's
+// placeholder rather than an artist.
+func isVariousArtists(artist string) bool {
+	switch strings.ToLower(strings.TrimSpace(artist)) {
+	case "various artists", "various", "va":
+		return true
+	default:
+		return false
+	}
 }
 
 // minFilesFor is the fewest audio files a folder must offer to be a
@@ -354,47 +540,83 @@ func minFilesFor(dl Download) int {
 // awaitSearch polls until the search completes or the budget runs out.
 // A timeout is not an error: partial Soulseek results are normal and
 // often good enough.
-func (s *slskd) awaitSearch(
-	ctx context.Context,
-	searchID string,
-) (slskdSearch, error) {
+//
+// The poll asks for the search's state only.  It used to ask for every
+// response on every one-second tick, which for a popular album is the
+// same few thousand file entries serialised twenty times to be read
+// once; searchResponses fetches them once at the end.
+func (s *slskd) awaitSearch(ctx context.Context, searchID string) error {
 	deadline := time.Now().Add(s.searchWait)
-
-	var last slskdSearch
 
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			return last, fmt.Errorf("%w: search cancelled", ErrSlskdTimeout)
+			return fmt.Errorf("%w: search cancelled", ErrSlskdTimeout)
 		case <-time.After(s.searchPoll):
 		}
 
 		var search slskdSearch
 
 		if err := s.client.get(
-			ctx,
-			"/api/v0/searches/"+searchID+"?includeResponses=true",
-			&search,
+			ctx, "/api/v0/searches/"+searchID, &search,
 		); err != nil {
-			return last, err
+			return err
 		}
 
-		last = search
-
 		if search.IsComplete {
-			return search, nil
+			return nil
 		}
 	}
 
-	return last, nil
+	return nil
+}
+
+// searchResponses fetches a search's responses once.
+//
+// `/searches/{id}/responses` is the endpoint for that; a daemon that
+// does not answer it is asked the older way, with the search itself
+// carrying its responses, so an older slskd degrades to the previous
+// behaviour rather than to no results at all.
+func (s *slskd) searchResponses(
+	ctx context.Context,
+	searchID string,
+) ([]slskdResponse, error) {
+	var responses []slskdResponse
+
+	err := s.client.get(
+		ctx, "/api/v0/searches/"+searchID+"/responses", &responses,
+	)
+	if err == nil {
+		return responses, nil
+	}
+
+	s.logger.Debug(
+		"slskd responses endpoint failed; asking with the search",
+		"error", err,
+	)
+
+	var search slskdSearch
+
+	if err := s.client.get(
+		ctx,
+		"/api/v0/searches/"+searchID+"?includeResponses=true",
+		&search,
+	); err != nil {
+		return nil, err
+	}
+
+	return search.Responses, nil
 }
 
 // candidatesFrom groups a search's responses into candidates, dropping
 // folders with fewer than minFiles audio files.
-func (s *slskd) candidatesFrom(search slskdSearch, minFiles int) []Candidate {
-	out := make([]Candidate, 0, len(search.Responses))
+func (s *slskd) candidatesFrom(
+	responses []slskdResponse,
+	minFiles int,
+) []Candidate {
+	out := make([]Candidate, 0, len(responses))
 
-	for _, resp := range search.Responses {
+	for _, resp := range responses {
 		for folder, files := range groupByFolder(resp.Files) {
 			audio := 0
 
@@ -414,6 +636,8 @@ func (s *slskd) candidatesFrom(search slskdSearch, minFiles int) []Candidate {
 					Format:  format,
 					Bitrate: f.BitRate,
 					IsAudio: isAudio,
+
+					LengthMillis: int64(f.Length) * millisPerSecond,
 				})
 
 				total += f.Size
@@ -462,7 +686,7 @@ func groupByFolder(files []slskdFile) map[string][]slskdFile {
 func peerHealth(r slskdResponse) float64 {
 	score := 0.35
 
-	if r.HasFreeUploadSlot || r.FreeUploadSlotFlag {
+	if r.HasFreeUploadSlot {
 		score += 0.4
 	}
 
