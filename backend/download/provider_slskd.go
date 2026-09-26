@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -75,6 +76,24 @@ const (
 
 	// slskdHTTPTimeout bounds one API call.
 	slskdHTTPTimeout = 20 * time.Second
+
+	// slskdStallAfter is how long a grab may go without a byte arriving
+	// before the peer is given up on.  It is measured from enqueue, so
+	// it covers a peer that queues us and never starts as well as one
+	// that starts and stops.  Ten minutes is long enough for a short
+	// queue ahead of us to clear and short enough that one unresponsive
+	// peer does not hold slskd's single transfer slot for an evening.
+	slskdStallAfter = 10 * time.Minute
+
+	// slskdAbsentGrace is how long a requested file may be missing from
+	// slskd's transfer list before it is counted as failed.  slskd lists
+	// a transfer as soon as it accepts it, so a file still absent after
+	// a few polls was refused.
+	slskdAbsentGrace = 30 * time.Second
+
+	// slskdCancelTimeout bounds the cleanup that cancels abandoned
+	// transfers.
+	slskdCancelTimeout = 15 * time.Second
 )
 
 func init() {
@@ -134,6 +153,8 @@ type slskd struct {
 	searchPoll   time.Duration
 	searchWait   time.Duration
 	transferPoll time.Duration
+	stallAfter   time.Duration
+	absentGrace  time.Duration
 }
 
 // newSlskd builds the provider from config.
@@ -188,6 +209,8 @@ func newSlskd(
 		searchPoll:    slskdSearchPoll,
 		searchWait:    slskdSearchWait,
 		transferPoll:  slskdTransferPoll,
+		stallAfter:    slskdStallAfter,
+		absentGrace:   slskdAbsentGrace,
 	}, nil
 }
 
@@ -467,6 +490,15 @@ func (s *slskd) Grab(
 		)
 	}
 
+	// slskd keeps finished transfers listed until someone removes them,
+	// and a transfer is matched to the request by filename.  A record
+	// left by an earlier attempt at the same file from the same peer
+	// would otherwise be read as this attempt's answer the moment the
+	// first poll came back — an old failure failing a transfer that has
+	// not started.  So what is already terminal is noted before enqueueing
+	// and ignored after.
+	stale := s.terminalTransferIDs(ctx, username)
+
 	wanted := make([]map[string]any, 0, len(c.Files))
 	for _, f := range c.Files {
 		wanted = append(wanted, map[string]any{
@@ -476,24 +508,69 @@ func (s *slskd) Grab(
 	}
 
 	if err := s.client.post(
-		ctx, "/api/v0/transfers/downloads/"+username, wanted, nil,
+		ctx, slskdDownloadsPath(username), wanted, nil,
 	); err != nil {
 		return Result{}, err
 	}
 
-	if err := s.awaitTransfers(ctx, username, c, onProgress); err != nil {
+	if err := s.awaitTransfers(
+		ctx, username, stale, c, onProgress,
+	); err != nil {
 		return Result{}, err
 	}
 
 	return s.collect(c, dst)
 }
 
+// slskdDownloadsPath is the transfers endpoint for one peer.  Soulseek
+// usernames may contain spaces and punctuation, so the name is escaped
+// rather than spliced into the path.
+func slskdDownloadsPath(username string) string {
+	return "/api/v0/transfers/downloads/" + url.PathEscape(username)
+}
+
+// terminalTransferIDs returns the ids of this peer's transfers that are
+// already finished.  Best effort: slskd answers 404 for a peer it has no
+// transfers with, and any failure here means only that there is nothing
+// to ignore.
+func (s *slskd) terminalTransferIDs(
+	ctx context.Context,
+	username string,
+) map[string]bool {
+	transfers, err := s.transfersFor(ctx, username)
+	if err != nil {
+		return nil
+	}
+
+	out := make(map[string]bool, len(transfers))
+
+	for _, t := range transfers {
+		if finished, _ := t.done(); finished && t.ID != "" {
+			out[t.ID] = true
+		}
+	}
+
+	return out
+}
+
 // awaitTransfers polls until every requested file reaches a terminal
-// state.  Soulseek queues are measured in hours, so the only deadline
-// is the caller's context.
+// state, the transfer stalls, or the caller gives up.
+//
+// Soulseek queues are measured in hours, so there is no deadline on the
+// transfer as a whole — but there is one on *progress*.  slskd's
+// transfer limit is one, so a peer that holds us in its queue without
+// sending a byte is not only failing this download, it is holding every
+// other Soulseek download behind it.  After stallAfter with nothing
+// moving the peer is given up on, and the manager tries another.
+//
+// Whatever way this ends short of every file finishing, the transfers
+// still live in slskd are cancelled there.  Returning without doing so
+// leaves the daemon downloading into its own folder for a request
+// nobody is waiting on any more.
 func (s *slskd) awaitTransfers(
 	ctx context.Context,
 	username string,
+	stale map[string]bool,
 	c Candidate,
 	onProgress ProgressFunc,
 ) error {
@@ -502,9 +579,18 @@ func (s *slskd) awaitTransfers(
 		wanted[f.Path] = true
 	}
 
+	var (
+		started      = time.Now()
+		lastProgress = started
+		lastBytes    int64
+		live         []slskdTransfer
+	)
+
 	for {
 		select {
 		case <-ctx.Done():
+			s.cancelTransfers(username, live)
+
 			return fmt.Errorf("%w: transfer cancelled", ErrSlskdTimeout)
 		case <-time.After(s.transferPoll):
 		}
@@ -512,60 +598,177 @@ func (s *slskd) awaitTransfers(
 		transfers, err := s.transfersFor(ctx, username)
 		if err != nil {
 			// A blip talking to the daemon should not abandon a
-			// transfer that may be hours in.
+			// transfer that may be hours in — but a daemon that stays
+			// away is a stall like any other.
 			s.logger.Debug("slskd transfer poll failed", "error", err)
+
+			if time.Since(lastProgress) >= s.stallAfter {
+				s.cancelTransfers(username, live)
+
+				return fmt.Errorf(
+					"%w: slskd has not answered for %s: %w",
+					ErrSlskdTimeout, s.stallAfter, err,
+				)
+			}
 
 			continue
 		}
 
-		var (
-			done, failed int
-			current      int64
+		tally := tallyTransfers(
+			transfers, wanted, stale,
+			time.Since(started) >= s.absentGrace,
 		)
+		live = tally.live
 
-		for _, t := range transfers {
-			if !wanted[t.Filename] {
-				continue
-			}
-
-			current += t.BytesTransferred
-
-			finished, ok := t.done()
-			if !finished {
-				continue
-			}
-
-			if ok {
-				done++
-			} else {
-				failed++
-			}
+		if tally.bytes > lastBytes {
+			lastBytes = tally.bytes
+			lastProgress = time.Now()
 		}
 
 		if onProgress != nil {
 			onProgress(Progress{
-				Current: current,
+				Current: tally.bytes,
 				Total:   c.TotalSize,
 				Phase: fmt.Sprintf(
-					"Transferring from %s (%d/%d)", username, done, len(wanted),
+					"Transferring from %s (%d/%d)",
+					username, tally.done, len(wanted),
 				),
 			})
 		}
 
-		if done+failed < len(wanted) {
+		if tally.done+tally.failed >= len(wanted) {
+			// Some files failing is normal — a peer goes offline
+			// mid-folder.  Let the importer's completeness check decide
+			// whether what arrived is enough, rather than discarding it
+			// here.
+			if tally.done == 0 {
+				return fmt.Errorf(
+					"%w: all %d files failed",
+					ErrSlskdTransferFailed, tally.failed,
+				)
+			}
+
+			return nil
+		}
+
+		if time.Since(lastProgress) < s.stallAfter {
 			continue
 		}
 
-		// Some files failing is normal — a peer goes offline mid-folder.
-		// Let the importer's completeness check decide whether what
-		// arrived is enough, rather than discarding it here.
-		if done == 0 {
-			return fmt.Errorf(
-				"%w: all %d files failed", ErrSlskdTransferFailed, failed,
+		s.cancelTransfers(username, live)
+
+		// A folder that stalls on its last track is the same shape as
+		// one whose last track failed, and goes forward the same way.
+		if tally.done > 0 {
+			s.logger.Info(
+				"slskd transfer stalled; keeping what arrived",
+				"peer", username,
+				"done", tally.done,
+				"wanted", len(wanted),
 			)
+
+			return nil
 		}
 
-		return nil
+		return fmt.Errorf(
+			"%w: %s sent nothing in %s",
+			ErrSlskdTimeout, username, s.stallAfter,
+		)
+	}
+}
+
+// transferTally is one poll's reading of the files a grab asked for.
+type transferTally struct {
+	done, failed int
+	bytes        int64
+
+	// live are the requested transfers slskd is still working on,
+	// which are what has to be cancelled if the grab is abandoned.
+	live []slskdTransfer
+}
+
+// tallyTransfers reads a peer's transfer list against the files a grab
+// asked for.
+//
+// A requested file slskd does not list at all is one it never accepted
+// — refused at enqueue, or dropped — and it will never reach a terminal
+// state to be counted by.  Once absentExpired, such a file counts as
+// failed, or the grab would wait on it until the six-hour ceiling.
+func tallyTransfers(
+	transfers []slskdTransfer,
+	wanted map[string]bool,
+	stale map[string]bool,
+	absentExpired bool,
+) transferTally {
+	seen := make(map[string]slskdTransfer, len(wanted))
+
+	for _, t := range transfers {
+		if !wanted[t.Filename] || stale[t.ID] {
+			continue
+		}
+
+		seen[t.Filename] = t
+	}
+
+	var out transferTally
+
+	for name := range wanted {
+		t, ok := seen[name]
+		if !ok {
+			if absentExpired {
+				out.failed++
+			}
+
+			continue
+		}
+
+		out.bytes += t.BytesTransferred
+
+		finished, succeeded := t.done()
+
+		switch {
+		case !finished:
+			out.live = append(out.live, t)
+		case succeeded:
+			out.done++
+		default:
+			out.failed++
+		}
+	}
+
+	return out
+}
+
+// cancelTransfers asks slskd to cancel and forget transfers this grab
+// is abandoning.  It runs on a context of its own: the usual reason to
+// be here is that the caller's context has just been cancelled, and a
+// cleanup that inherited it would never be sent.
+func (s *slskd) cancelTransfers(username string, live []slskdTransfer) {
+	if len(live) == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(), slskdCancelTimeout,
+	)
+	defer cancel()
+
+	for _, t := range live {
+		if t.ID == "" {
+			continue
+		}
+
+		endpoint := slskdDownloadsPath(username) + "/" +
+			url.PathEscape(t.ID) + "?remove=true"
+
+		if err := s.client.delete(ctx, endpoint); err != nil {
+			s.logger.Warn(
+				"could not cancel slskd transfer",
+				"peer", username,
+				"file", t.Filename,
+				"error", err,
+			)
+		}
 	}
 }
 
@@ -581,9 +784,7 @@ func (s *slskd) transfersFor(
 		} `json:"directories"`
 	}
 
-	if err := s.client.get(
-		ctx, "/api/v0/transfers/downloads/"+username, &raw,
-	); err != nil {
+	if err := s.client.get(ctx, slskdDownloadsPath(username), &raw); err != nil {
 		return nil, err
 	}
 

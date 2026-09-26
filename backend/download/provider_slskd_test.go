@@ -31,8 +31,18 @@ type slskdStub struct {
 	transfers [][]slskdTransfer
 	pollCount int
 
+	// before is what the downloads endpoint reports until something is
+	// enqueued: records slskd already held from earlier attempts.
+	before []slskdTransfer
+
 	// enqueued records what was requested for download.
 	enqueued []map[string]any
+	posted   bool
+
+	// paths records the escaped path of every transfers call, and
+	// cancelled the escaped request URI of every DELETE.
+	paths     []string
+	cancelled []string
 
 	// unauthorized makes every call return 401.
 	unauthorized bool
@@ -87,7 +97,12 @@ func newSlskdStub(t *testing.T) *slskdStub {
 			return
 		}
 
-		if r.Method == http.MethodPost {
+		s.mu.Lock()
+		s.paths = append(s.paths, r.URL.EscapedPath())
+		s.mu.Unlock()
+
+		switch r.Method {
+		case http.MethodPost:
 			var body []map[string]any
 
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -96,14 +111,34 @@ func newSlskdStub(t *testing.T) *slskdStub {
 
 			s.mu.Lock()
 			s.enqueued = body
+			s.posted = true
 			s.mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
 
 			return
+		case http.MethodDelete:
+			s.mu.Lock()
+			s.cancelled = append(s.cancelled, r.URL.RequestURI())
+			s.mu.Unlock()
+
+			w.WriteHeader(http.StatusNoContent)
+
+			return
 		}
 
 		s.mu.Lock()
+
+		if !s.posted {
+			before := s.before
+			s.mu.Unlock()
+
+			writeJSON(t, w, map[string]any{
+				"directories": []map[string]any{{"files": before}},
+			})
+
+			return
+		}
 
 		idx := s.pollCount
 		if idx >= len(s.transfers) {
@@ -190,6 +225,11 @@ func newStubSlskd(t *testing.T, stub *slskdStub) (*slskd, string) {
 	s.searchPoll = time.Millisecond
 	s.searchWait = 200 * time.Millisecond
 	s.transferPoll = time.Millisecond
+
+	// Long enough that no existing test trips them by accident; the
+	// tests about stalls and absences set their own.
+	s.stallAfter = time.Minute
+	s.absentGrace = time.Minute
 
 	return s, downloads
 }
@@ -563,5 +603,295 @@ func TestSlskdRequiresConfiguration(t *testing.T) {
 				t.Errorf("error = %v, want ErrNotConfigured", err)
 			}
 		})
+	}
+}
+
+// slskdAlbum is a two-file candidate from peer, with the files slskd
+// would have written already in place under downloads.
+func slskdAlbum(t *testing.T, downloads, peer string, arrived ...string) Candidate {
+	t.Helper()
+
+	folder := filepath.Join(downloads, "Album")
+	if err := os.MkdirAll(folder, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	for _, name := range arrived {
+		if err := os.WriteFile(
+			filepath.Join(folder, name), []byte("audio"), 0o600,
+		); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	return Candidate{
+		Files: []CandidateFile{
+			{Path: `\s\Album\01 A.flac`, Size: 500, IsAudio: true},
+			{Path: `\s\Album\02 B.flac`, Size: 500, IsAudio: true},
+		},
+		TotalSize: 1000,
+		Payload:   map[string]string{"username": peer},
+	}
+}
+
+// cancelledURIs returns what the stub was asked to cancel.
+func (s *slskdStub) cancelledURIs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return append([]string(nil), s.cancelled...)
+}
+
+// A peer that queues us and never sends a byte is given up on, and the
+// queued transfers are cancelled in slskd rather than left to start
+// hours later for a request nobody is waiting on.
+func TestSlskdGrabGivesUpOnAStalledPeer(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+	stub.transfers = [][]slskdTransfer{{
+		{ID: "t1", Filename: `\s\Album\01 A.flac`, State: "Queued, Remotely"},
+		{ID: "t2", Filename: `\s\Album\02 B.flac`, State: "Queued, Remotely"},
+	}}
+
+	s, downloads := newStubSlskd(t, stub)
+	s.stallAfter = 30 * time.Millisecond
+
+	_, err := s.Grab(
+		context.Background(), slskdAlbum(t, downloads, "peer"), t.TempDir(), nil,
+	)
+	if !errors.Is(err, ErrSlskdTimeout) {
+		t.Fatalf("error = %v, want ErrSlskdTimeout", err)
+	}
+
+	got := stub.cancelledURIs()
+	if len(got) != 2 {
+		t.Fatalf("cancelled %v, want both queued transfers", got)
+	}
+
+	for _, uri := range got {
+		if !strings.HasSuffix(uri, "?remove=true") {
+			t.Errorf("cancel %s does not remove the record", uri)
+		}
+	}
+}
+
+// A folder that stalls on its last track goes forward with what
+// arrived, the same as one whose last track failed; the importer's
+// completeness check decides whether that is enough.
+func TestSlskdGrabKeepsWhatArrivedBeforeAStall(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+	stub.transfers = [][]slskdTransfer{{
+		{
+			ID: "t1", Filename: `\s\Album\01 A.flac`,
+			State: "Completed, Succeeded", BytesTransferred: 500,
+		},
+		{ID: "t2", Filename: `\s\Album\02 B.flac`, State: "Queued, Remotely"},
+	}}
+
+	s, downloads := newStubSlskd(t, stub)
+	s.stallAfter = 30 * time.Millisecond
+
+	got, err := s.Grab(
+		context.Background(),
+		slskdAlbum(t, downloads, "peer", "01 A.flac"),
+		t.TempDir(), nil,
+	)
+	if err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+
+	if len(got.Files) != 1 {
+		t.Errorf("collected %d files, want the 1 that arrived", len(got.Files))
+	}
+
+	if cancelled := stub.cancelledURIs(); len(cancelled) != 1 ||
+		!strings.Contains(cancelled[0], "/t2") {
+		t.Errorf("cancelled %v, want only the stalled t2", cancelled)
+	}
+}
+
+// Progress is what holds the stall timer off.  A transfer that keeps
+// moving bytes is never abandoned, however long it takes.
+func TestSlskdGrabWaitsOnATransferThatIsMoving(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+
+	for b := int64(1); b <= 100; b++ {
+		stub.transfers = append(stub.transfers, []slskdTransfer{
+			{ID: "t1", Filename: `\s\Album\01 A.flac`, State: "InProgress", BytesTransferred: b},
+			{ID: "t2", Filename: `\s\Album\02 B.flac`, State: "Queued, Remotely"},
+		})
+	}
+
+	stub.transfers = append(stub.transfers, []slskdTransfer{
+		{
+			ID:               "t1",
+			Filename:         `\s\Album\01 A.flac`,
+			State:            "Completed, Succeeded",
+			BytesTransferred: 500,
+		},
+		{
+			ID:               "t2",
+			Filename:         `\s\Album\02 B.flac`,
+			State:            "Completed, Succeeded",
+			BytesTransferred: 500,
+		},
+	})
+
+	s, downloads := newStubSlskd(t, stub)
+	// A hundred polls take several times the stall window; each one
+	// moves a byte.  The window is kept well above one poll so a
+	// descheduled test runner does not read as a stall.
+	s.transferPoll = 5 * time.Millisecond
+	s.stallAfter = 150 * time.Millisecond
+
+	got, err := s.Grab(
+		context.Background(),
+		slskdAlbum(t, downloads, "peer", "01 A.flac", "02 B.flac"),
+		t.TempDir(), nil,
+	)
+	if err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+
+	if len(got.Files) != 2 {
+		t.Errorf("collected %d files, want 2", len(got.Files))
+	}
+}
+
+// A file slskd never lists was refused at enqueue and will never reach
+// a terminal state.  It counts as failed once the grace period is up,
+// rather than being waited on until the six-hour ceiling.
+func TestSlskdGrabCountsAnUnlistedFileAsFailed(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+	stub.transfers = [][]slskdTransfer{{
+		{
+			ID: "t1", Filename: `\s\Album\01 A.flac`,
+			State: "Completed, Succeeded", BytesTransferred: 500,
+		},
+	}}
+
+	s, downloads := newStubSlskd(t, stub)
+	s.absentGrace = 20 * time.Millisecond
+
+	got, err := s.Grab(
+		context.Background(),
+		slskdAlbum(t, downloads, "peer", "01 A.flac"),
+		t.TempDir(), nil,
+	)
+	if err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+
+	if len(got.Files) != 1 {
+		t.Errorf("collected %d files, want 1", len(got.Files))
+	}
+}
+
+// A finished record left by an earlier attempt at the same file is not
+// this attempt's answer.  Without the snapshot it would fail the grab on
+// the first poll, before the new transfer had started.
+func TestSlskdGrabIgnoresAnEarlierAttemptsRecord(t *testing.T) {
+	t.Parallel()
+
+	stale := slskdTransfer{
+		ID: "old", Filename: `\s\Album\01 A.flac`, State: "Completed, Errored",
+	}
+
+	stub := newSlskdStub(t)
+	stub.before = []slskdTransfer{stale}
+	stub.transfers = [][]slskdTransfer{
+		{stale},
+		{
+			stale,
+			{
+				ID: "new", Filename: `\s\Album\01 A.flac`,
+				State: "Completed, Succeeded", BytesTransferred: 500,
+			},
+		},
+	}
+
+	s, downloads := newStubSlskd(t, stub)
+
+	c := slskdAlbum(t, downloads, "peer", "01 A.flac")
+	c.Files = c.Files[:1]
+
+	got, err := s.Grab(context.Background(), c, t.TempDir(), nil)
+	if err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+
+	if len(got.Files) != 1 {
+		t.Errorf("collected %d files, want 1", len(got.Files))
+	}
+}
+
+// Cancelling the download cancels the transfer in slskd too.  The
+// cleanup must not inherit the cancelled context, or it is never sent.
+func TestSlskdGrabCancelsTransfersWhenTheCallerGivesUp(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+	stub.transfers = [][]slskdTransfer{{
+		{ID: "t1", Filename: `\s\Album\01 A.flac`, State: "InProgress", BytesTransferred: 10},
+		{ID: "t2", Filename: `\s\Album\02 B.flac`, State: "Queued, Remotely"},
+	}}
+
+	s, downloads := newStubSlskd(t, stub)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := s.Grab(ctx, slskdAlbum(t, downloads, "peer"), t.TempDir(), nil)
+	if !errors.Is(err, ErrSlskdTimeout) {
+		t.Fatalf("error = %v, want ErrSlskdTimeout", err)
+	}
+
+	if got := stub.cancelledURIs(); len(got) != 2 {
+		t.Errorf("cancelled %v, want both live transfers", got)
+	}
+}
+
+// Soulseek usernames carry spaces and punctuation; spliced raw into the
+// path, a name with a slash addresses a different endpoint entirely.
+func TestSlskdEscapesTheUsername(t *testing.T) {
+	t.Parallel()
+
+	stub := newSlskdStub(t)
+	stub.transfers = [][]slskdTransfer{{
+		{
+			ID: "t1", Filename: `\s\Album\01 A.flac`,
+			State: "Completed, Succeeded", BytesTransferred: 500,
+		},
+		{
+			ID: "t2", Filename: `\s\Album\02 B.flac`,
+			State: "Completed, Succeeded", BytesTransferred: 500,
+		},
+	}}
+
+	s, downloads := newStubSlskd(t, stub)
+
+	if _, err := s.Grab(
+		context.Background(),
+		slskdAlbum(t, downloads, "dj a/b", "01 A.flac", "02 B.flac"),
+		t.TempDir(), nil,
+	); err != nil {
+		t.Fatalf("Grab: %v", err)
+	}
+
+	stub.mu.Lock()
+	paths := append([]string(nil), stub.paths...)
+	stub.mu.Unlock()
+
+	for _, p := range paths {
+		if p != "/api/v0/transfers/downloads/dj%20a%2Fb" {
+			t.Errorf("transfers call went to %s", p)
+		}
 	}
 }
