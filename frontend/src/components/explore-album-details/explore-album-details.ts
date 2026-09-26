@@ -60,6 +60,7 @@ import '@awesome.me/webawesome/dist/components/dropdown-item/dropdown-item.js';
 import { dictByName } from '@utils/binding';
 import type { TrackDetails } from '@components/track-details/track-details.js';
 import { showTrackDetailsForPath } from '@utils/track-details-opener.js';
+import { openMusicBrainz } from '@utils/external-link';
 import '@components/playlist-picker/playlist-picker.js';
 import {
     ICON_CAN_REQUEST,
@@ -2942,7 +2943,7 @@ export class ExploreAlbumDetails extends LitElement implements ContextMenuHost {
 
         if (!track?.mbid) return;
 
-        window.open(`https://musicbrainz.org/recording/${track.mbid}`, '_blank', 'noopener');
+        openMusicBrainz(`/recording/${track.mbid}`);
     }
 
     /**

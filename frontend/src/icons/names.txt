@@ -31,6 +31,7 @@ solid/bookmark
 solid/box-open
 solid/check
 solid/chevron-down
+solid/chevron-left
 solid/chevron-right
 solid/circle-check
 solid/circle-exclamation

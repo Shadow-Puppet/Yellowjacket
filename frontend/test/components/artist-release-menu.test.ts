@@ -25,7 +25,9 @@ const ARTIST = 'artist-0001';
 
 /** The labels of the open menu's items, trimmed. */
 function menuItems(el: LitElement): string[] {
-  const panel = shadow(el, '.context-menu-panel');
+  // Scoped to the context menu: the artist page also has a Play/Shuffle
+  // dropdown, and its panel carries the same class.
+  const panel = shadow(el, '#context-menu .context-menu-panel');
 
   if (!panel) return [];
 
@@ -100,7 +102,7 @@ describe('the context menu on an artist page release', () => {
 
     await openMenuOnAlbum(el, 0);
 
-    const panel = shadow(el, '.context-menu-panel');
+    const panel = shadow(el, '#context-menu .context-menu-panel');
 
     expect(panel).toBeTruthy();
     // The panel is shared with the track menu, so a label that does not

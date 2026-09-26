@@ -1,24 +1,28 @@
 /**
- * Owned is plain; unowned is what gets marked.
+ * The catalog's cards are not dimmed; the badge is the mark.
  *
- * `explore-album-details` had this right for one tracklist and nothing
- * else did: Explore's cards, the top-results row and the artist page's
- * three card shapes all mixed owned and unowned with a small badge as
- * the only difference — and drew a green tick on the *common* case,
- * which is the treatment the album page's own green ticks were removed
- * for.
+ * The rule this replaced had every unowned card dimmed *and* badged,
+ * which on a shelf of mostly-unowned covers read as a page that had
+ * failed to load rather than a page of things you could ask for. So the
+ * dimming is gone from the catalog surfaces and the badge carries the
+ * whole statement — over the artwork, on hover, drawn for owned and
+ * unowned alike.
  *
- * What is pinned here is the rule rather than any one surface, because
- * the fault this replaced was eight call sites each holding their own
- * version of it:
+ * What is still pinned here is the half that was never about dimming:
  *
- *  - an owned thing draws **no badge at all**;
- *  - an unowned one is dimmed *and* says so in its accessible name,
- *    because dimming is a colour and cannot be the only signal;
  *  - ownership is a **file** (`localId`), never the catalog's
  *    `inLibrary` ratchet, which is a flag that happens to agree;
- *  - and a partly-held album says *how* partly, which is the one thing
- *    a tick cannot.
+ *  - a row that cannot be played is `aria-disabled`, while a card that
+ *    still navigates is not;
+ *  - a partly-held album says *how* partly, which is the one thing a
+ *    tick cannot;
+ *  - and an unowned thing still says so in its accessible name, because
+ *    with the dimming gone that name is the whole signal for anyone not
+ *    seeing the badge.
+ *
+ * The album page's *tracklist* still dims unowned rows — a different
+ * statement about a different thing — and is covered by
+ * `album-request-badge-visibility.test.ts`.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
@@ -26,7 +30,7 @@ import { page } from 'vitest/browser';
 import '@components/explore-view/explore-view';
 import '@components/top-results-row/top-results-row';
 import { flush, stub, resetHarness } from '@test/support/harness';
-import { fixture, shadow, shadowAll, update } from '@test/support/render';
+import { fixture, shadow, update } from '@test/support/render';
 import { completenessStore } from '@store/completeness-store';
 
 const SEARCH = 'explore.Service.SearchLocal';
@@ -105,27 +109,44 @@ beforeEach(() => {
   // absent one — which is the point, or 87% of a grid re-asks forever.
   // Two tests in one file are two sessions as far as it is concerned,
   // so a stale entry from the test above would otherwise decide the
-  // one below. Found by writing the assertion the wrong way round.
+  // one below.
   completenessStore.invalidate();
 });
 
-describe('an owned thing is plain', () => {
-  it('draws no badge on an album card it has files for', async () => {
+describe('an unowned card is marked by its badge alone', () => {
+  it('does not dim the artwork', async () => {
+    const el = await exploreShowing({
+      releaseGroups: [album('Absent', {})],
+    });
+
+    const art = shadow(el, '.album-card .album-art-container')!;
+
+    // The dimming was an opacity on this box. With it gone the cover is
+    // at full strength, and the badge is what says the card is not
+    // yours.
+    expect(getComputedStyle(art).opacity).toBe('1');
+    expect(shadow(el, '.album-card library-status-indicator')).not.toBeNull();
+  });
+
+  it('still says so in the name the browser computes', async () => {
+    await exploreShowing({ releaseGroups: [album('Absent', {})] });
+
+    await expect
+      .element(page.getByRole('button', { name: /Absent — not in your library/ }))
+      .toBeInTheDocument();
+  });
+});
+
+describe('an owned card is plain except for its badge', () => {
+  it('draws the in-library badge rather than nothing', async () => {
     const el = await exploreShowing({
       releaseGroups: [album('Held', { localId: 7 })],
     });
 
-    expect(shadowAll(el, '.album-card')).toHaveLength(1);
-    expect(shadow(el, '.album-card library-status-indicator')).toBeNull();
-  });
+    const badge = shadow(el, '.album-card library-status-indicator');
 
-  it('draws no badge on a track row it has a file for', async () => {
-    const el = await exploreShowing({
-      recordings: [recording('Held', { localId: 9 })],
-    });
-
-    expect(shadowAll(el, '.track-item')).toHaveLength(1);
-    expect(shadow(el, '.track-item library-status-indicator')).toBeNull();
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute('status')).toBe('in-library');
   });
 
   it('does not dim it', async () => {
@@ -136,56 +157,6 @@ describe('an owned thing is plain', () => {
     expect(shadow(el, '.album-card')?.classList.contains('unowned')).toBe(
       false,
     );
-  });
-});
-
-describe('an unowned thing is marked', () => {
-  it('dims the card and keeps its request badge', async () => {
-    const el = await exploreShowing({
-      releaseGroups: [album('Absent', {})],
-    });
-
-    expect(shadow(el, '.album-card')?.classList.contains('unowned')).toBe(true);
-    expect(shadow(el, '.album-card library-status-indicator')).not.toBeNull();
-  });
-
-  /**
-   * The name is the half of this that reaches anyone not seeing the
-   * dimming, so it has to be the browser's own answer — a shadow-root
-   * query cannot compute a name, and this repo has shipped a nameless
-   * control three times.
-   */
-  it('says so in the name the browser computes', async () => {
-    await exploreShowing({ releaseGroups: [album('Absent', {})] });
-
-    await expect
-      .element(page.getByRole('button', { name: /Absent — not in your library/ }))
-      .toBeInTheDocument();
-  });
-
-  /**
-   * A track row is `aria-disabled` and a card is not, and the
-   * difference is not cosmetic: activating an unowned row does nothing
-   * (`onRecordingRowDblClick` returns early), while a card navigates to
-   * the catalog page for it, which is a perfectly good thing to do with
-   * something you do not own.
-   */
-  it('marks a row that cannot be played as disabled', async () => {
-    const el = await exploreShowing({
-      recordings: [recording('Absent', {})],
-    });
-
-    expect(shadow(el, '.track-item')?.getAttribute('aria-disabled')).toBe(
-      'true',
-    );
-  });
-
-  it('leaves a card that still navigates enabled', async () => {
-    const el = await exploreShowing({
-      releaseGroups: [album('Absent', {})],
-    });
-
-    expect(shadow(el, '.album-card')?.getAttribute('aria-disabled')).toBeNull();
   });
 });
 
@@ -206,7 +177,9 @@ describe('ownership is a file, not a flag', () => {
     });
 
     expect(shadow(el, '.album-card')?.classList.contains('unowned')).toBe(true);
-    expect(shadow(el, '.album-card library-status-indicator')).not.toBeNull();
+    expect(
+      shadow(el, '.album-card library-status-indicator')?.getAttribute('status'),
+    ).not.toBe('in-library');
   });
 
   it('does the same for a track row', async () => {
@@ -217,6 +190,26 @@ describe('ownership is a file, not a flag', () => {
     expect(shadow(el, '.track-item')?.getAttribute('aria-disabled')).toBe(
       'true',
     );
+  });
+});
+
+describe('a track row that cannot be played is disabled', () => {
+  it('marks an unowned row', async () => {
+    const el = await exploreShowing({
+      recordings: [recording('Absent', {})],
+    });
+
+    expect(shadow(el, '.track-item')?.getAttribute('aria-disabled')).toBe(
+      'true',
+    );
+  });
+
+  it('leaves a card that still navigates enabled', async () => {
+    const el = await exploreShowing({
+      releaseGroups: [album('Absent', {})],
+    });
+
+    expect(shadow(el, '.album-card')?.getAttribute('aria-disabled')).toBeNull();
   });
 });
 
@@ -248,9 +241,13 @@ describe('a partly-held album says how partly', () => {
 
     // A partly-held album is *actionable* — it has three tracks left to
     // ask for — so the badge is a button, and the name has to carry the
-    // action and the count. Naming it after the action alone left the
-    // one state the ring exists for as the one state whose name did not
-    // mention it.
+    // action and the count. The badge is revealed by the card's focus
+    // (`:focus-within`), and `visibility: hidden` is what takes it out
+    // of the accessibility tree until then, so the card is focused
+    // first — which is exactly the route a keyboard user takes.
+    shadow<HTMLElement>(el, '.album-card')?.focus();
+    await el.updateComplete;
+
     await expect
       .element(
         page.getByRole('button', {
@@ -266,7 +263,7 @@ describe('a partly-held album says how partly', () => {
    * state, and a ring drawn from its absence would mark all of it
    * incomplete on no evidence. That is the rule `Known` exists for.
    */
-  it('says nothing when the total was never declared', async () => {
+  it('falls back to the plain in-library badge when the total was never declared', async () => {
     stub(COMPLETENESS, {
       '7': { owned: 3, expected: 0, known: false, complete: false },
     });
@@ -279,7 +276,9 @@ describe('a partly-held album says how partly', () => {
     await flush();
     await el.updateComplete;
 
-    expect(shadow(el, '.album-card library-status-indicator')).toBeNull();
+    expect(
+      shadow(el, '.album-card library-status-indicator')?.getAttribute('status'),
+    ).toBe('in-library');
   });
 
   it('asks about the owned albums only, in one call', async () => {
@@ -329,11 +328,13 @@ describe('the top-results row follows the same rule', () => {
       query: 'held',
     });
 
+    // A top-result card is a mixed bag — artist, album or track — and
+    // its badge is a corner mark rather than the cover overlay the
+    // album cards grew, so an owned one stays plain.
     expect(shadow(el, '.card library-status-indicator')).toBeNull();
-    expect(shadow(el, '.card')?.classList.contains('unowned')).toBe(false);
   });
 
-  it('dims and names something it does not', async () => {
+  it('names something it does not own', async () => {
     const el = await fixture('top-results-row', {
       results: [result('Absent', 'release_group')],
       query: 'absent',
@@ -349,7 +350,7 @@ describe('the top-results row follows the same rule', () => {
   /**
    * An artist card has never had a badge — a discography subscription
    * is the artist page's Follow button, which can say what it commits
-   * to — so the dimming and the name are the whole signal there.
+   * to — so the name is the whole signal there.
    */
   it('marks an unowned artist without offering a request', async () => {
     const el = await fixture('top-results-row', {

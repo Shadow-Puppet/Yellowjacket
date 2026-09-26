@@ -4,6 +4,8 @@ import { customElement, property, state, query } from 'lit/decorators.js';
 import { classMap } from 'lit/directives/class-map.js';
 import { designTokens } from '../../styles/tokens.css';
 import { backButton } from '../../styles/back-button.css';
+import { albumCardStyles } from '../../styles/album-card.css';
+import '../scroll-row/scroll-row.js';
 import {
     LookupArtist,
     BrowseReleaseGroups,
@@ -46,11 +48,8 @@ import {
     libraryStatusFor,
     toggleRequest,
 } from '@utils/library-status';
-import {
-    isOwned,
-    ownershipLabel,
-    unownedStyles,
-} from '@utils/ownership';
+import { isOwned, ownershipLabel } from '@utils/ownership';
+import { openMusicBrainz } from '@utils/external-link';
 import { completenessStore } from '@store/completeness-store';
 import '../catalog-scope-notice/catalog-scope-notice.js';
 import type { CatalogScope } from '../catalog-scope-notice/catalog-scope-notice.js';
@@ -62,6 +61,7 @@ import {
     ContextMenuController,
     contextMenuStyles,
     isContextMenuKey,
+    MenuKeyboard,
 } from '@utils/context-menu-controller.js';
 import type { ContextMenuHost, MenuTarget } from '@utils/context-menu-controller.js';
 import '@awesome.me/webawesome/dist/components/popup/popup.js';
@@ -187,11 +187,11 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
     @state() private topReleasesExpanded = false;
     private topSectionStacked = false;
     private topSectionObserver?: ResizeObserver;
-    @state() private expandedDiscoGroups = new Set<string>();
-    /** Number of album cards that fit in one row of the discography grid. */
-    @state() private discoRowSize = 5;
-    private discoObserver?: ResizeObserver;
-    @state() private similarExpanded = false;
+
+    /** Whether the Play button's Shuffle dropdown is up. */
+    @state() private playMenuOpen = false;
+    private playMenuKeyboard = new MenuKeyboard(() => this.closePlayMenu());
+    private playOutsideAttached = false;
 
     /* ── Release prefetch ── */
 
@@ -220,6 +220,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     @query('#context-menu')
     private contextMenuPopup!: MenuSurface;
+
+    @query('.play-menu-button')
+    private playMenuButton?: HTMLButtonElement;
+
+    @query('#artist-play-menu')
+    private playMenuPanel?: HTMLElement;
 
     @query('#playlist-submenu')
     private playlistSubmenuPopup?: WaPopup;
@@ -271,7 +277,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         backButton,
         exploreLinkStyles,
         contextMenuStyles,
-        unownedStyles,
+        albumCardStyles,
         css`
             :host {
                 display: flex;
@@ -319,8 +325,43 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 object-fit: cover;
             }
 
-            .artist-follow {
+            .artist-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
                 margin-top: 10px;
+            }
+
+            /* The Play button and its caret are one control, so they
+               are one box: no gap between them, and the caret carries
+               the same filled appearance as the button it extends. */
+            .play-split {
+                display: inline-flex;
+                align-items: stretch;
+            }
+
+            .play-menu-button {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                padding: 0;
+                border: none;
+                border-left: 1px solid rgba(0, 0, 0, 0.25);
+                border-radius: 0 6px 6px 0;
+                background: var(--yj-accent, #ffd43b);
+                color: var(--yj-accent-fg, #000);
+                cursor: pointer;
+            }
+
+            .play-menu-button:hover {
+                filter: brightness(1.1);
+            }
+
+            .play-menu-button:focus-visible {
+                outline: 2px solid var(--yj-accent-text, #ffd43b);
+                outline-offset: 2px;
             }
 
             .artist-info {
@@ -331,7 +372,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             }
 
             .artist-title {
-                font-size: 24px;
+                font-size: 28px;
                 font-weight: 700;
                 color: var(--yj-text-primary, #fff);
                 white-space: nowrap;
@@ -357,6 +398,13 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 align-items: center;
                 gap: 6px;
                 flex-wrap: wrap;
+            }
+
+            /* The listen count is a headline number, not metadata, so
+               it sits a size above the type/country line. */
+            .artist-listens {
+                font-size: var(--yj-text-lg);
+                color: var(--yj-text-secondary, #b3b3b3);
             }
 
             .meta-separator {
@@ -446,23 +494,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 outline-offset: -2px;
             }
 
-            .artist-play-actions {
-                margin-top: 10px;
-                display: flex;
-                gap: 8px;
-                align-items: center;
-                flex-wrap: wrap;
-            }
-
-            .track-rank {
-                width: 24px;
-                text-align: right;
-                color: var(--yj-text-tertiary, #888);
-                font-size: var(--yj-text-md);
-                font-variant-numeric: tabular-nums;
-                flex-shrink: 0;
-            }
-
             .track-art {
                 width: 32px;
                 height: 32px;
@@ -487,6 +518,52 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 font-size: 16px;
                 color: var(--yj-text-tertiary, #888);
                 opacity: 0.5;
+            }
+
+            /* Play where you own the track, the request badge where you
+               do not — over the artwork rather than at the end of the
+               row, where it was a badge beside a row you can already
+               double-click. */
+            .track-art-overlay {
+                position: absolute;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 4px;
+                background: rgba(0, 0, 0, 0.55);
+                visibility: hidden;
+                opacity: 0;
+                transition: opacity 0.15s ease, visibility 0.15s ease;
+            }
+
+            .track-art-play {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+                border: none;
+                background: none;
+                color: #fff;
+                font-size: 14px;
+                cursor: pointer;
+            }
+
+            @media (hover: hover) and (pointer: fine) {
+                .track-item:hover .track-art-overlay,
+                .track-item:focus-within .track-art-overlay {
+                    visibility: visible;
+                    opacity: 1;
+                }
+            }
+
+            /* No hover means no double-click either, so the overlay is
+               the only route to playing a top track and must be there. */
+            @media not all and (hover: hover) {
+                .track-art-overlay {
+                    visibility: visible;
+                    opacity: 1;
+                }
             }
 
             .track-info {
@@ -522,7 +599,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             .track-item library-status-indicator {
                 flex-shrink: 0;
             }
-
             /* ── Top section (tracks + releases side-by-side) ── */
             .top-section-wrapper {
                 container-type: inline-size;
@@ -754,8 +830,30 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 white-space: nowrap;
             }
 
-            .top-release-meta library-status-indicator {
-                flex-shrink: 0;
+            .top-release-art .album-card-badge {
+                position: absolute;
+                top: 4px;
+                left: 4px;
+                z-index: 1;
+                display: flex;
+                visibility: hidden;
+                opacity: 0;
+                transition: opacity 0.15s ease, visibility 0.15s ease;
+            }
+
+            @media (hover: hover) and (pointer: fine) {
+                .top-release-card:hover .album-card-badge,
+                .top-release-card:focus-within .album-card-badge {
+                    visibility: visible;
+                    opacity: 1;
+                }
+            }
+
+            @media not all and (hover: hover) {
+                .top-release-art .album-card-badge {
+                    visibility: visible;
+                    opacity: 1;
+                }
             }
 
 
@@ -773,150 +871,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 margin: 0;
             }
 
-            .album-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, 140px);
-                gap: 16px;
-            }
-
-            .album-grid.collapsed {
-                grid-template-rows: 1fr;
-                overflow: hidden;
-            }
-
-            .disco-toggle {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                gap: 6px;
-                padding: 4px 10px;
-                margin-top: 4px;
-                border: none;
-                border-radius: 6px;
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-                color: var(--yj-text-secondary, #b3b3b3);
-                font-size: var(--yj-text-xs);
-                cursor: pointer;
-                transition: background 0.15s ease, color 0.15s ease;
-                width: 100%;
-            }
-
-            .disco-toggle:hover {
-                background: var(--yj-bg-hover, rgba(255, 255, 255, 0.1));
-                color: var(--yj-text-primary, #fff);
-            }
-
-            .disco-toggle wa-icon {
-                font-size: 11px;
-                transition: transform 0.2s ease;
-            }
-
-            .disco-toggle[aria-expanded='true'] wa-icon {
-                transform: rotate(180deg);
-            }
-
-            .album-card {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-                padding: 8px;
-                border-radius: 8px;
-                cursor: pointer;
-                transition: background 0.15s ease;
-            }
-
-            .album-card:hover {
-                background: var(
-                    --yj-bg-overlay,
-                    rgba(255, 255, 255, 0.06)
-                );
-            }
-
-            .album-card:active {
-                transform: scale(0.97);
-            }
-
-            .album-art-container {
-                width: 100%;
-                aspect-ratio: 1;
-                border-radius: 4px;
-                overflow: hidden;
-                flex-shrink: 0;
-                position: relative;
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-            }
-
-            .album-art-container img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-                border-radius: 4px;
-            }
-
-            .album-art-fallback {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 100%;
-                height: 100%;
-                position: absolute;
-                inset: 0;
-            }
-
-            .album-art-fallback wa-icon {
-                color: var(--yj-text-tertiary, #888);
-                font-size: 24px;
-                opacity: 0.5;
-            }
-
-            .album-title {
-                font-weight: 500;
-                color: var(--yj-text-primary, #fff);
-                font-size: var(--yj-text-sm);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .album-meta {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 6px;
-                color: var(--yj-text-tertiary, #888);
-                font-size: var(--yj-text-xs);
-                min-height: 20px;
-            }
-
-            .album-meta-text {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                min-width: 0;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-
-            .album-meta library-status-indicator {
-                flex-shrink: 0;
-                margin-left: auto;
-            }
-
             /* ── Similar artists ── */
-            .similar-row {
-                display: grid;
-                grid-template-columns: repeat(auto-fill, 140px);
-                gap: 16px;
-                overflow: hidden;
-            }
-
-            .similar-row.collapsed {
-                grid-template-rows: 1fr;
-                overflow: hidden;
-            }
-
             .similar-artist-card {
                 display: flex;
                 flex-direction: column;
@@ -926,6 +881,9 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 border-radius: 8px;
                 cursor: pointer;
                 text-align: center;
+                width: 120px;
+                box-sizing: border-box;
+                flex-shrink: 0;
                 transition: background 0.15s ease;
             }
 
@@ -1056,7 +1014,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         this.unsubSimilarReady?.();
         if (this.discogFallbackTimer) clearTimeout(this.discogFallbackTimer);
         this.topSectionObserver?.disconnect();
-        this.discoObserver?.disconnect();
+        this.detachPlayOutsideClose();
     }
 
     /**
@@ -1083,16 +1041,13 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
     protected override firstUpdated() {
         this.observeTopSectionWidth();
-        this.observeDiscoWidth();
     }
 
     protected override updated() {
-        // Re-attach observers if elements appeared after initial render.
+        // Re-attach the observer if the section appeared after initial
+        // render.
         if (!this.topSectionObserver) {
             this.observeTopSectionWidth();
-        }
-        if (!this.discoObserver) {
-            this.observeDiscoWidth();
         }
     }
 
@@ -1124,32 +1079,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         });
 
         this.topSectionObserver.observe(wrapper);
-    }
-
-    /**
-     * Watch the .content width and compute how many album cards
-     * fit in one row of the discography grid.
-     * Grid uses: repeat(auto-fill, minmax(140px, 1fr)) with 16px gap
-     * and album-card has 8px padding on each side.
-     */
-    private observeDiscoWidth() {
-        const content = this.renderRoot.querySelector('.content');
-        if (!content) return;
-
-        const CARD_MIN = 140;
-        const GAP = 16;
-
-        this.discoObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                const width = entry.contentBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
-                const cols = Math.max(1, Math.floor((width + GAP) / (CARD_MIN + GAP)));
-                if (cols !== this.discoRowSize) {
-                    this.discoRowSize = cols;
-                }
-            }
-        });
-
-        this.discoObserver.observe(content);
     }
 
     /* ── Data Loading ── */
@@ -1862,6 +1791,8 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 } catch {
                     // No image — letter avatar stays.
                 }
+
+                return undefined;
             }),
         );
     }
@@ -1997,6 +1928,65 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                 text: describeError(error, 'Could not play this artist’s library tracks.'),
             });
         }
+    }
+
+    /* ── Play / Shuffle split button ── */
+
+    /**
+     * Open the Play button's Shuffle dropdown.
+     *
+     * `page-header`'s overflow menu one control over: the same
+     * `MenuKeyboard`, the same document-level outside-close, and the
+     * same `menu-surface`, so the phone gets the bottom sheet rather
+     * than a popup that Chrome 113 clips.
+     */
+    private togglePlayMenu = (): void => {
+        if (this.playMenuOpen) {
+            this.closePlayMenu();
+
+            return;
+        }
+
+        this.playMenuOpen = true;
+
+        void this.updateComplete.then(() => {
+            if (!this.playMenuOpen) return;
+
+            this.playMenuKeyboard.open(
+                this.playMenuPanel ?? null,
+                this.playMenuButton ?? null,
+            );
+            this.attachPlayOutsideClose();
+        });
+    };
+
+    private closePlayMenu = (): void => {
+        if (!this.playMenuOpen) return;
+
+        this.detachPlayOutsideClose();
+        this.playMenuKeyboard.close();
+        this.playMenuOpen = false;
+    };
+
+    private onPlayOutsideDown = (e: Event): void => {
+        if (e.composedPath().includes(this.playMenuPanel as EventTarget)) return;
+        if (e.composedPath().includes(this.playMenuButton as EventTarget)) return;
+
+        this.closePlayMenu();
+    };
+
+    private attachPlayOutsideClose(): void {
+        if (this.playOutsideAttached) return;
+
+        this.playOutsideAttached = true;
+        document.addEventListener('mousedown', this.onPlayOutsideDown, true);
+    }
+
+    private detachPlayOutsideClose(): void {
+        if (!this.playOutsideAttached) return;
+
+        this.playOutsideAttached = false;
+        document.removeEventListener('mousedown', this.onPlayOutsideDown, true);
     }
 
     /**
@@ -2240,11 +2230,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
         if (!release?.mbid) return;
 
-        window.open(
-            `https://musicbrainz.org/release-group/${release.mbid}`,
-            '_blank',
-            'noopener',
-        );
+        openMusicBrainz(`/release-group/${release.mbid}`);
     }
 
     private onContextMenuAction(
@@ -2358,7 +2344,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
 
         if (!track?.recordingMbid) return;
 
-        window.open(`https://musicbrainz.org/recording/${track.recordingMbid}`, '_blank', 'noopener');
+        openMusicBrainz(`/recording/${track.recordingMbid}`);
     }
 
     /* ── Navigation ── */
@@ -2538,10 +2524,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                         : nothing}
                     ${this.renderArtistMeta()}
                     ${this.artist?.popularity && this.artist.popularity > 0
-                        ? html`<span class="artist-meta">${formatListenCount(this.artist.popularity)} plays on ListenBrainz</span>`
+                        ? html`<span class="artist-listens">${formatListenCount(this.artist.popularity)} plays on ListenBrainz</span>`
                         : nothing}
-                    ${this.renderPlayLibraryAction()}
-                    ${this.renderFollowAction()}
+                    <div class="artist-actions">
+                        ${this.renderPlayLibraryAction()}
+                        ${this.renderFollowAction()}
+                    </div>
                 </div>
             </div>
             <div class="content">
@@ -2572,25 +2560,53 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         if (this.ownedLocalAlbumIds().length === 0) return nothing;
 
         return html`
-            <div class="artist-play-actions">
+            <div class="play-split">
                 <wa-button
                     size="small"
                     appearance="filled"
                     data-testid="artist-play-library"
+                    title="Play library tracks"
                     @click=${() => void this.playLibraryTracks(false)}
                 >
                     <wa-icon slot="start" name="play"></wa-icon>
-                    Play library tracks
+                    Play
                 </wa-button>
-                <wa-button
-                    size="small"
-                    appearance="outlined"
-                    data-testid="artist-shuffle-library"
-                    @click=${() => void this.playLibraryTracks(true)}
+                <menu-surface
+                    placement="bottom-start"
+                    .active=${this.playMenuOpen}
+                    @menu-dismiss=${this.closePlayMenu}
                 >
-                    <wa-icon slot="start" name="shuffle"></wa-icon>
-                    Shuffle
-                </wa-button>
+                    <button
+                        slot="anchor"
+                        class="play-menu-button"
+                        type="button"
+                        data-testid="artist-play-menu"
+                        aria-label="More play options"
+                        aria-haspopup="menu"
+                        aria-expanded=${this.playMenuOpen ? 'true' : 'false'}
+                        aria-controls="artist-play-menu"
+                        @click=${this.togglePlayMenu}
+                    >
+                        <wa-icon name="chevron-down"></wa-icon>
+                    </button>
+                    <div
+                        id="artist-play-menu"
+                        class="context-menu-panel"
+                        role="menu"
+                        aria-label="Play options"
+                    >
+                        <wa-dropdown-item
+                            data-testid="artist-shuffle-library"
+                            @click=${() => {
+                                this.closePlayMenu();
+                                void this.playLibraryTracks(true);
+                            }}
+                        >
+                            <wa-icon slot="icon" name="shuffle"></wa-icon>
+                            Shuffle
+                        </wa-dropdown-item>
+                    </div>
+                </menu-surface>
             </div>
         `;
     }
@@ -2786,25 +2802,27 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         const request = downloadStore.requestFor(this.artistMBID);
 
         return html`
-            <div class="artist-follow">
-                <wa-button
-                    size="small"
-                    appearance=${request ? 'filled' : 'outlined'}
-                    @click=${() => void this.toggleFollow(request?.id)}
-                >
-                    <!-- This was bookmark-check, which is not in
-                         names.txt and so has rendered the missing-icon
-                         fallback — a circled question mark — on every
-                         followed artist since it was written. A
-                         backtick around that name would end this
-                         template literal, which is why there is none. -->
-                    <wa-icon
-                        slot="start"
-                        name=${request ? ICON_REQUESTED : ICON_CAN_REQUEST}
-                    ></wa-icon>
-                    ${request ? 'Following' : 'Follow for new releases'}
-                </wa-button>
-            </div>
+            <wa-button
+                size="small"
+                appearance=${request ? 'filled' : 'outlined'}
+                data-testid="artist-follow"
+                title=${request
+                    ? 'Following this artist'
+                    : 'Follow this artist for new releases'}
+                @click=${() => void this.toggleFollow(request?.id)}
+            >
+                <!-- This was bookmark-check, which is not in
+                     names.txt and so has rendered the missing-icon
+                     fallback — a circled question mark — on every
+                     followed artist since it was written. A
+                     backtick around that name would end this
+                     template literal, which is why there is none. -->
+                <wa-icon
+                    slot="start"
+                    name=${request ? ICON_REQUESTED : ICON_CAN_REQUEST}
+                ></wa-icon>
+                ${request ? 'Following' : 'Follow'}
+            </wa-button>
         `;
     }
 
@@ -2888,16 +2906,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         this.topReleasesExpanded = !this.topReleasesExpanded;
     }
 
-    private toggleDiscoGroup(type: string) {
-        const next = new Set(this.expandedDiscoGroups);
-        if (next.has(type)) {
-            next.delete(type);
-        } else {
-            next.add(type);
-        }
-        this.expandedDiscoGroups = next;
-    }
-
     private renderTopSection() {
         const hasTracks = !this.loadingTracks && this.topTracks.length > 0;
         const hasReleases = !this.loadingTopReleases && this.topReleaseGroups.length > 0;
@@ -2971,6 +2979,31 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                                                                        }} />`
                                                                 : html`<wa-icon name="compact-disc"></wa-icon>`;
                                                         })()}
+                                                        <!-- Over the artwork, not beside the
+                                                             row: play where you own it, the
+                                                             request badge where you do not. -->
+                                                        <div class="track-art-overlay">
+                                                            ${owned
+                                                                ? html`<button
+                                                                      class="track-art-play"
+                                                                      type="button"
+                                                                      aria-label=${`Play ${t.trackName}`}
+                                                                      @click=${(e: Event) => {
+                                                                          e.stopPropagation();
+                                                                          void this.playTrack(t);
+                                                                      }}
+                                                                  >
+                                                                      <wa-icon name="play"></wa-icon>
+                                                                  </button>`
+                                                                : html`<library-status-indicator
+                                                                      status=${libraryStatusFor(false, t.recordingMbid)}
+                                                                      entity-type="track"
+                                                                      label=${t.trackName}
+                                                                      request-mbid=${t.recordingMbid}
+                                                                      request-artist=${t.artistName ?? ''}
+                                                                      size="18"
+                                                                  ></library-status-indicator>`}
+                                                        </div>
                                                     </div>
                                                     <div class="track-info">
                                                         <div class="track-title">${trackLink(t.trackName, t.releaseName, t.releaseGroupMbid ?? '', t.recordingMbid)}</div>
@@ -2979,15 +3012,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                                                     <span class="track-listens">
                                                         ${formatListenCount(t.totalListenCount)} plays
                                                     </span>
-                                                    ${owned
-                                                        ? nothing
-                                                        : html`<library-status-indicator
-                                                              status=${libraryStatusFor(false, t.recordingMbid)}
-                                                              entity-type="track"
-                                                              label=${t.trackName}
-                                                              request-mbid=${t.recordingMbid}
-                                                              request-artist=${t.artistName ?? ''}
-                                                          ></library-status-indicator>`}
                                                 </div>
                                             `;
                                         })}
@@ -3093,6 +3117,18 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                     <div class="album-art-fallback" style="${artURL ? 'display: none' : ''}">
                         <wa-icon name="compact-disc"></wa-icon>
                     </div>
+                    <div class="album-card-badge">
+                        <library-status-indicator
+                            status=${badge.status}
+                            owned=${badge.owned}
+                            expected=${badge.expected}
+                            entity-type="album"
+                            label=${rg.title}
+                            request-mbid=${rg.releaseGroupMbid}
+                            request-artist=${this.artist?.name ?? ''}
+                            size="21"
+                        ></library-status-indicator>
+                    </div>
                 </div>
                 <div class="top-release-text">
                     <div class="top-release-title" title="${rg.title}">
@@ -3102,18 +3138,6 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                         <div class="top-release-meta-text">
                             ${rg.date ? html`<span>${extractYear(rg.date)}</span>` : nothing}
                         </div>
-                        ${badge.status === 'in-library'
-                            ? nothing
-                            : html`<library-status-indicator
-                                  status=${badge.status}
-                                  owned=${badge.owned}
-                                  expected=${badge.expected}
-                                  entity-type="album"
-                                  label=${rg.title}
-                                  request-mbid=${rg.releaseGroupMbid}
-                                  request-artist=${this.artist?.name ?? ''}
-                                  size="18"
-                              ></library-status-indicator>`}
                     </div>
                 </div>
             </div>
@@ -3164,37 +3188,16 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
             <section>
                 <h3 class="section-header">Discography</h3>
                 ${groups.map(
-                    (g) => {
-                        const isExpanded = this.expandedDiscoGroups.has(g.type);
-                        const rowSize = this.discoRowSize;
-                        const showToggle = g.items.length > rowSize;
-                        const visibleItems = isExpanded ? g.items : g.items.slice(0, rowSize);
-
-                        return html`
-                            <div class="disco-group">
-                                <h4 class="disco-type-header">
-                                    ${g.type === 'Other' ? 'Other Releases' : g.type.endsWith('s') ? g.type : `${g.type}s`}
-                                </h4>
-                                <div class="album-grid">
-                                    ${visibleItems.map((rg) => this.renderAlbumCard(rg))}
-                                </div>
-                                ${showToggle
-                                    ? html`
-                                          <button
-                                              class="disco-toggle"
-                                              aria-expanded="${isExpanded}"
-                                              @click=${() => this.toggleDiscoGroup(g.type)}
-                                          >
-                                              ${isExpanded
-                                                  ? 'Show less'
-                                                  : `Show all ${g.items.length}`}
-                                              <wa-icon name="chevron-down"></wa-icon>
-                                          </button>
-                                      `
-                                    : nothing}
-                            </div>
-                        `;
-                    },
+                    (g) => html`
+                        <div class="disco-group">
+                            <h4 class="disco-type-header">
+                                ${g.type === 'Other' ? 'Other Releases' : g.type.endsWith('s') ? g.type : `${g.type}s`}
+                            </h4>
+                            <scroll-row>
+                                ${g.items.map((rg) => this.renderAlbumCard(rg))}
+                            </scroll-row>
+                        </div>
+                    `,
                 )}
             </section>
         `;
@@ -3234,23 +3237,25 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                     <div class="album-art-fallback" style="${artURL ? 'display: none' : ''}">
                         <wa-icon name="compact-disc"></wa-icon>
                     </div>
+                    <div class="album-card-badge">
+                        <library-status-indicator
+                            status=${badge.status}
+                            owned=${badge.owned}
+                            expected=${badge.expected}
+                            entity-type="album"
+                            label=${rg.title}
+                            request-mbid=${rg.mbid}
+                            request-artist=${this.artist?.name ?? ''}
+                            size="23"
+                        ></library-status-indicator>
+                    </div>
                 </div>
                 <div class="album-title" title="${rg.title}">${rg.title}</div>
+                <div class="album-artist">${rg.artistCredit ?? ''}</div>
                 <div class="album-meta">
                     <div class="album-meta-text">
                         ${year ? html`<span>${year}</span>` : nothing}
                     </div>
-                    ${badge.status === 'in-library'
-                        ? nothing
-                        : html`<library-status-indicator
-                              status=${badge.status}
-                              owned=${badge.owned}
-                              expected=${badge.expected}
-                              entity-type="album"
-                              label=${rg.title}
-                              request-mbid=${rg.mbid}
-                              request-artist=${this.artist?.name ?? ''}
-                          ></library-status-indicator>`}
                 </div>
             </div>
         `;
@@ -3266,15 +3271,12 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
         // Cap the similar-artists list at 10 to avoid a very long list.
         const maxSimilar = 10;
         const artists = this.similarArtists.slice(0, maxSimilar);
-        const showToggle = artists.length > this.discoRowSize;
-        const collapsed = !this.similarExpanded && showToggle;
-        const visible = collapsed ? artists.slice(0, this.discoRowSize) : artists;
 
         return html`
             <section>
                 <h3 class="section-header">Similar Artists</h3>
-                <div class="similar-row ${collapsed ? 'collapsed' : ''}">
-                    ${visible.map((a) => {
+                <scroll-row>
+                    ${artists.map((a) => {
                         const imgURL = this.similarImageURLs.get(a.artistMbid);
                         return html`
                             <div
@@ -3313,21 +3315,7 @@ export class ExploreArtistDetails extends LitElement implements ContextMenuHost 
                             </div>
                         `;
                     })}
-                </div>
-                ${showToggle
-                    ? html`
-                          <button
-                              class="disco-toggle"
-                              aria-expanded="${this.similarExpanded}"
-                              @click=${() => { this.similarExpanded = !this.similarExpanded; }}
-                          >
-                              ${this.similarExpanded
-                                  ? 'Show less'
-                                  : `Show all ${artists.length}`}
-                              <wa-icon name="chevron-down"></wa-icon>
-                          </button>
-                      `
-                    : nothing}
+                </scroll-row>
             </section>
         `;
     }

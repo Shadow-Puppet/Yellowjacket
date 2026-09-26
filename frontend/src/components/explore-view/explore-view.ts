@@ -1,10 +1,7 @@
 import { avatarBackground } from '@utils/avatar-color';
 import { albumBadgeFor, libraryStatusFor } from '@utils/library-status';
-import {
-    isOwned,
-    ownershipLabel,
-    unownedStyles,
-} from '@utils/ownership';
+import { isOwned, ownershipLabel } from '@utils/ownership';
+import { openMusicBrainz } from '@utils/external-link';
 import { completenessStore } from '@store/completeness-store';
 import { downloadStore } from '@store/download-store';
 import { LitElement, html, css, nothing } from 'lit';
@@ -13,6 +10,8 @@ import { classMap } from 'lit/directives/class-map.js';
 import '@components/page-header/page-header';
 import { designTokens } from '../../styles/tokens.css';
 import { srOnly } from '../../styles/sr-only.css';
+import { albumCardStyles } from '../../styles/album-card.css';
+import '../scroll-row/scroll-row.js';
 import { SearchLocal, SearchLyrics, GetThumbnail, GetThumbnails, GetArtistImageURL, GetArtistImagesCachedPaths, GetExploreShelves, RecordSearchClick } from '@go/explore/service.js';
 import { GetFilePathsByAlbums, GetFilePathsByRecordingMBIDs } from '@go/library/library.js';
 import { EventsOn } from '@runtime/runtime';
@@ -253,7 +252,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
         srOnly,
         exploreLinkStyles,
         contextMenuStyles,
-        unownedStyles,
+        albumCardStyles,
         css`
             :host {
                 display: block;
@@ -529,21 +528,9 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 line-height: 1.5;
             }
 
-            /* ── Horizontal scroll rows ── */
-            .horizontal-row {
-                display: flex;
-                gap: 12px;
-                overflow-x: auto;
-                padding-bottom: 4px;
-                scrollbar-width: none;
-            }
-
-            .horizontal-row::-webkit-scrollbar {
-                display: none;
-            }
-
-            /* ── Top result cards ── */
             /* ── Artist cards ── */
+            /* Fixed width, for the reason the album card is: a range
+               means two cards in one row are different sizes. */
             .artist-card {
                 display: flex;
                 flex-direction: column;
@@ -552,8 +539,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 padding: 10px;
                 border-radius: 8px;
                 cursor: pointer;
-                min-width: 100px;
-                max-width: 120px;
+                width: 120px;
+                box-sizing: border-box;
                 flex-shrink: 0;
                 text-align: center;
                 transition: background 0.15s ease;
@@ -624,115 +611,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 font-size: var(--yj-text-xs);
             }
 
-            /* ── Album cards ── */
-            .album-card {
-                display: flex;
-                flex-direction: column;
-                gap: 6px;
-                padding: 8px;
-                border-radius: 8px;
-                cursor: pointer;
-                min-width: 130px;
-                max-width: 150px;
-                flex-shrink: 0;
-                transition: background 0.15s ease;
-            }
-
-            .album-card:hover {
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.06));
-            }
-
-            .album-card:active {
-                transform: scale(0.97);
-            }
-
-            .album-art-container {
-                width: 100%;
-                aspect-ratio: 1;
-                border-radius: 4px;
-                overflow: hidden;
-                background: linear-gradient(
-                    135deg,
-                    var(--yj-bg-overlay, #404040) 0%,
-                    var(--yj-bg-surface, #282828) 100%
-                );
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                position: relative;
-            }
-
-            .album-art-container img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-                display: block;
-            }
-
-            .album-art-fallback {
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                width: 100%;
-                height: 100%;
-                position: absolute;
-                inset: 0;
-            }
-
-            .album-art-fallback wa-icon {
-                color: var(--yj-text-tertiary, #888);
-                font-size: 24px;
-                opacity: 0.5;
-            }
-
-            .album-title {
-                font-weight: 500;
-                color: var(--yj-text-primary, #fff);
-                font-size: var(--yj-text-sm);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .album-artist {
-                color: var(--yj-text-tertiary, #888);
-                font-size: var(--yj-text-xs);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .album-meta {
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 6px;
-                color: var(--yj-text-tertiary, #888);
-                font-size: var(--yj-text-xs);
-                min-height: 20px;
-            }
-
-            .album-meta-text {
-                display: flex;
-                align-items: center;
-                gap: 6px;
-                min-width: 0;
-                overflow: hidden;
-            }
-
-            .album-meta library-status-indicator {
-                flex-shrink: 0;
-                margin-left: auto;
-            }
-
-            .type-badge {
-                background: var(--yj-bg-overlay, rgba(255, 255, 255, 0.08));
-                padding: 1px 6px;
-                border-radius: 3px;
-                font-size: 10px;
-                white-space: nowrap;
-            }
-
             /* ── Track list ── */
             .track-list {
                 display: flex;
@@ -753,7 +631,6 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 cursor: pointer;
             }
 
-            .album-card:focus-visible,
             .track-item:focus-visible {
                 outline: 2px solid var(--yj-accent-text, #ffd43b);
                 outline-offset: -2px;
@@ -1371,7 +1248,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
 
         const entity = target.kind === 'album' ? 'release-group' : 'recording';
 
-        window.open(`https://musicbrainz.org/${entity}/${target.mbid}`, '_blank', 'noopener');
+        openMusicBrainz(`/${entity}/${target.mbid}`);
     }
 
     private renderExploreContextMenu() {
@@ -1662,6 +1539,8 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 } catch {
                     // No image — leave empty string.
                 }
+
+                return undefined;
             }),
         );
 
@@ -2122,7 +2001,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 ${subtitle
                     ? html`<p class="section-reason">${subtitle}</p>`
                     : nothing}
-                <div class="horizontal-row">
+                <scroll-row>
                     ${artists.map((a) => {
                         const owned = isOwned(a);
                         const name = a.englishName || a.name;
@@ -2171,7 +2050,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                             </div>
                         `;
                     })}
-                </div>
+                </scroll-row>
             </section>
         `;
     }
@@ -2187,7 +2066,7 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                 ${subtitle
                     ? html`<p class="section-reason">${subtitle}</p>`
                     : nothing}
-                <div class="horizontal-row">
+                <scroll-row>
                     ${releaseGroups.map((rg) => {
                         const artURL = this.thumbnailCache.get(rg.mbid) || '';
                         const year = extractYear(rg.firstReleaseDate);
@@ -2249,6 +2128,18 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                     >
                                         <wa-icon name="compact-disc"></wa-icon>
                                     </div>
+                                    <div class="album-card-badge">
+                                        <library-status-indicator
+                                            status=${badge.status}
+                                            owned=${badge.owned}
+                                            expected=${badge.expected}
+                                            entity-type="album"
+                                            label=${rg.title}
+                                            request-mbid=${rg.mbid}
+                                            request-artist=${rg.artistCredit ?? ''}
+                                            size="23"
+                                        ></library-status-indicator>
+                                    </div>
                                 </div>
                                 <div class="album-title" title="${rg.title}">
                                     ${rg.title}
@@ -2256,29 +2147,18 @@ export class ExploreView extends ViewLifecycleMixin(LitElement) implements Conte
                                 <div class="album-artist">${creditLink(creditStore.credits(rg.mbid), rg.artistCredit, rg.artistMbid ?? '')}</div>
                                 <div class="album-meta">
                                     <div class="album-meta-text">
+                                        ${year ? html`<span>${year}</span>` : nothing}
                                         ${rg.primaryType
                                             ? html`<span class="type-badge"
                                                   >${rg.primaryType}</span
                                               >`
                                             : nothing}
-                                        ${year ? html`<span>${year}</span>` : nothing}
                                     </div>
-                                    ${badge.status === 'in-library'
-                                        ? nothing
-                                        : html`<library-status-indicator
-                                              status=${badge.status}
-                                              owned=${badge.owned}
-                                              expected=${badge.expected}
-                                              entity-type="album"
-                                              label=${rg.title}
-                                              request-mbid=${rg.mbid}
-                                              request-artist=${rg.artistCredit ?? ''}
-                                          ></library-status-indicator>`}
                                 </div>
                             </div>
                         `;
                     })}
-                </div>
+                </scroll-row>
             </section>
         `;
     }

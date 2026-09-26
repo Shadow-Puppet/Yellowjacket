@@ -12,6 +12,7 @@ import { libraryStore } from '@store/library-store';
 import { EventsOn } from '@runtime/runtime';
 import { Events } from '../../events';
 import '@components/page-header/page-header';
+import '../scroll-row/scroll-row.js';
 import { designTokens } from '../../styles/tokens.css';
 import { ViewLifecycleMixin } from '../../utils/view-lifecycle';
 
@@ -99,16 +100,6 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 color: var(--yj-text-tertiary, #888);
             }
 
-            .row {
-                display: grid;
-                grid-auto-flow: column;
-                grid-auto-columns: 160px;
-                gap: 14px;
-                overflow-x: auto;
-                padding-bottom: 6px;
-                scrollbar-width: thin;
-            }
-
             .card {
                 background: none;
                 border: none;
@@ -117,6 +108,8 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                 cursor: pointer;
                 color: inherit;
                 display: block;
+                width: 160px;
+                flex-shrink: 0;
             }
 
             .art {
@@ -336,9 +329,9 @@ export class HomeView extends ViewLifecycleMixin(LitElement) {
                     <span class="shelf-title">${shelf.title}</span>
                 </div>
                 <p class="shelf-sub">${shelf.subtitle}</p>
-                <div class="row">
+                <scroll-row>
                     ${(shelf.albums ?? []).map((album) => this.renderCard(album))}
-                </div>
+                </scroll-row>
             </section>
         `;
     }

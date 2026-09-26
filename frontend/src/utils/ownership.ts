@@ -10,6 +10,16 @@
  * badge as the only difference. This is that rule, written once, so
  * eight surfaces cannot each keep their own version of it.
  *
+ * **The catalog's *cards* no longer dim.** A grid of dimmed covers read
+ * as a page that had failed to load rather than as a page of things you
+ * could ask for, so on Explore the mark is the badge alone — over the
+ * artwork, on hover, drawn for owned and unowned alike. The album
+ * page's *tracklist* still dims unowned rows: that is a different
+ * statement ("this one is not here") about a different thing, and the
+ * `aria-disabled` row that cannot be played is what it is for. So
+ * `unownedStyles` survives for that one surface and the cards simply do
+ * not include it.
+ *
  * ## Ownership is a file, and `localId` is the flag that says so
  *
  * The album page answers "do I own this row" with `filePaths`, a map
@@ -96,7 +106,8 @@ export function ownershipLabel(
 }
 
 /**
- * The dimming, shared so it cannot drift across surfaces.
+ * The dimming, shared so it cannot drift across surfaces — and now
+ * used by exactly one of them.
  *
  * Two things about it are load-bearing.
  *

@@ -1,6 +1,7 @@
 import { LitElement, html, css, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { designTokens } from '../../styles/tokens.css';
+import '../scroll-row/scroll-row.js';
 import type * as explore from '@go/explore/models.js';
 import {
     GetArtistImageURL,
@@ -15,7 +16,6 @@ import { albumBadgeFor, libraryStatusFor } from '../../utils/library-status';
 import {
     isOwned,
     ownershipLabel,
-    unownedStyles,
     type OwnableKind,
 } from '../../utils/ownership';
 import { completenessStore } from '../../store/completeness-store';
@@ -103,18 +103,10 @@ export class TopResultsRow extends LitElement {
     static override styles = [
         designTokens,
         exploreLinkStyles,
-        unownedStyles,
         css`
             :host {
                 display: block;
                 margin-bottom: 16px;
-            }
-
-            .row {
-                display: flex;
-                gap: 12px;
-                overflow-x: auto;
-                padding-bottom: 4px;
             }
 
             .card {
@@ -285,9 +277,9 @@ export class TopResultsRow extends LitElement {
 
         return html`
             <div class="section-label">Top Results</div>
-            <div class="row">
+            <scroll-row>
                 ${this.results.map((r) => this.renderCard(r))}
-            </div>
+            </scroll-row>
         `;
     }
 
